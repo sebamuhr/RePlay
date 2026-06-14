@@ -30,6 +30,7 @@
     background:var(--card); border:1px solid var(--line); color:var(--fg);
     padding:10px 12px; border-radius:10px; font-size:15px; outline:none; }
   input:focus { border-color:#444; }
+  input.secret { -webkit-text-security: disc; text-security: disc; }
   #q { flex:1; min-width:0; }
 
   button { background:var(--card); color:var(--fg); border:1px solid var(--line);
@@ -160,7 +161,7 @@
   <div class="panel" id="panel">
     <h3>YouTube API key</h3>
     <p>Free, not a login. Create one at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credentials</a> and enable “YouTube Data API v3”. Stored only on this device.</p>
-    <div class="row"><input id="apiKey" type="password" placeholder="Paste YouTube API key" autocomplete="off"><button id="saveKey">Save</button></div>
+    <div class="row"><input id="apiKey" type="text" class="secret" placeholder="Paste YouTube API key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button id="saveKey">Save</button></div>
 
     <hr class="hr">
     <h3>Topics <span style="color:var(--muted);font-weight:400">— fill your Home &amp; Shorts feeds (no algorithm)</span></h3>
@@ -186,7 +187,7 @@
     <hr class="hr">
     <h3>Sync across devices (GitHub) <span id="syncState"></span></h3>
     <p>Optional. Your history/favorites/watch-later/blocklist sync via a private GitHub Gist. Create a token (scope: <b>gist</b> only) at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Stored only on this device.</p>
-    <div class="row"><span class="lbl">GitHub token</span><input id="ghToken" type="password" placeholder="ghp_…" autocomplete="off"></div>
+    <div class="row"><span class="lbl">GitHub token</span><input id="ghToken" type="text" class="secret" placeholder="ghp_…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
     <div class="row"><span class="lbl">Gist ID</span><input id="gistId" type="text" placeholder="leave empty to auto-create"><button id="connectGh">Connect</button><button id="syncNow">Sync now</button></div>
 
     <hr class="hr">
