@@ -272,6 +272,11 @@ data.prefs.budgets = Object.assign(defaultData().prefs.budgets, data.prefs.budge
 data.budgetState = Object.assign(defaultData().budgetState, data.budgetState||{});
 data.deleted = Object.assign(defaultData().deleted, data.deleted||{});
 
+// Local pool of discovered videos (device-only cache; the browsable "feed").
+const POOL_KEY = 'replay.pool', POOL_MAX = 1000;
+let pool = readJSON(POOL_KEY, []);
+function savePool(){ writeJSON(POOL_KEY, pool); }
+
 function saveData({ touch=true, sync=true } = {}) {
   if (touch) data.updatedAt = Date.now();
   writeJSON(DATA_KEY, data);
@@ -437,7 +442,7 @@ function removeDislike(w) {
   data.blocksUpdatedAt = Date.now(); saveData(); afterTopicChange();
 }
 function afterTopicChange() { renderTopics(); renderDislikes(); renderSuggestions(); rerenderFilter(); }
-function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); lastResultsQuery = null; }
+function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); } // clean up legacy caches
 $('likeTopic').onclick = () => { addTopic($('newTopic').value); $('newTopic').value=''; };
 $('dislikeTopic').onclick = () => { addDislike($('newTopic').value); $('newTopic').value=''; };
 $('newTopic').addEventListener('keydown', e => { if (e.key==='Enter') $('likeTopic').click(); });
@@ -468,13 +473,13 @@ let sugLocal = [], sugYT = [], sugActive = -1;
 
 function buildLocalSuggestions(q) {
   const ql = (q||'').toLowerCase().trim();
-  const seen = new Set(); const pool = [];
-  const add = (s, tag) => { const k=(s||'').toLowerCase(); if (s && !seen.has(k)) { seen.add(k); pool.push({ text:s, tag }); } };
+  const seen = new Set(); const sugs = [];
+  const add = (s, tag) => { const k=(s||'').toLowerCase(); if (s && !seen.has(k)) { seen.add(k); sugs.push({ text:s, tag }); } };
   (data.savedSearches || []).forEach(s => add(s, 'recent'));
   (data.prefs.topics || []).forEach(s => add(s, 'topic'));
   PREDEFINED_TOPICS.forEach(s => add(s, 'preset'));
-  if (!ql) return pool.filter(x => x.tag==='recent').slice(0, 8);     // empty box → recent searches
-  return pool.filter(x => x.text.toLowerCase().includes(ql)).slice(0, 8);
+  if (!ql) return sugs.filter(x => x.tag==='recent').slice(0, 8);     // empty box → recent searches
+  return sugs.filter(x => x.text.toLowerCase().includes(ql)).slice(0, 8);
 }
 
 function renderSugg() {
@@ -522,7 +527,6 @@ function ytSuggest(q) {
 /* ============================== SEARCH = FILTER BUILDER ============================== */
 let activeFilters = [];
 let lastResults = [];
-let lastResultsQuery = null; // the query lastResults was fetched for ('__home__' or the filter string)
 let currentTab = 'search';
 let homeSub = 'videos'; // 'videos' | 'shorts'
 
@@ -553,8 +557,9 @@ function addFilter(t) {
   t = (t||'').trim(); if (!t) return;
   currentTab = 'search';
   if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
-  setTab('search'); // re-renders chrome + runs the new filter search
+  setTab('search'); // local feed, free
   pushNav();
+  if (!lastResults.length && secrets.apiKey) findMore(); // nothing saved matches → fetch fresh from YouTube
 }
 function removeFilter(t) {
   activeFilters = activeFilters.filter(x => x !== t);
@@ -609,82 +614,69 @@ async function fetchVideos(ids) {
   return out;
 }
 
-let pageState = null; // { mode:'search'|'home', query?, topics?, token?, tokens? }
+let pageState = null; // pagination tokens for "Find more": { mode:'search'|'home', query?, topics?, token?, tokens? }
 
 function apiErr(e) {
   return /quota/i.test(e && e.message || '')
-    ? 'Daily YouTube quota reached (~100 searches/day on the free key). It resets at midnight US-Pacific — cached results still work until then.'
+    ? 'Daily YouTube quota reached (~100 searches/day on the free key). It resets at midnight US-Pacific — your saved feed still works.'
     : ('Error: ' + (e && e.message || e));
 }
 
-async function runFilterSearch() {
-  if (!activeFilters.length) return loadHome();
-  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
-  const query = activeFilters.join(' ');
-  flash('Filtering…'); $('grid').innerHTML=''; $('empty').textContent='';
-  try {
-    const { ids, next } = await searchPage(query, null);
-    lastResults = ids.length ? await fetchVideos(ids) : [];
-    lastResultsQuery = query;
-    pageState = { mode:'search', query, token: next };
-    rememberSearch(query);
-    rerenderFilter();
-  } catch (err) { flash(apiErr(err)); toast(apiErr(err)); }
+// Add freshly fetched videos to the local pool (dedup, newest first, capped).
+function addToPool(vids) {
+  const byId = new Map(pool.map(v => [v.id, v]));
+  let added = 0;
+  vids.forEach(v => { if (!byId.has(v.id)) { byId.set(v.id, Object.assign(stripVideo(v), { ts: Date.now() })); added++; } });
+  pool = Array.from(byId.values()).sort((a,b) => (b.ts||0)-(a.ts||0)).slice(0, POOL_MAX);
+  savePool();
+  return added;
 }
 
-async function loadHome(force=false) {
+// The free, local feed: pool minus already-watched, filtered by your search terms.
+function showFeed() {
   if (currentTab !== 'search') return;
-  const topics = data.prefs.topics || [];
-  if (!topics.length) { lastResults=[]; pageState=null; $('grid').innerHTML=''; flash(''); $('empty').textContent='Add topics in ⚙ Preferences to fill your Home feed — or type a filter above.'; return; }
-  if (!secrets.apiKey) { $('panel').classList.add('open'); flash(''); $('empty').textContent='Add your YouTube API key in ⚙ to load your feed.'; return; }
-  const key = topics.slice().sort().join('|');
-  const cache = readJSON('replay.home', null);
-  const useCache = () => { lastResults = cache.items; lastResultsQuery = '__home__'; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); };
-  if (!force && cache && cache.key===key && Date.now()-cache.ts < 24*3600e3) { useCache(); return; } // 24h cache to save quota
-  flash('Loading your topics…'); $('grid').innerHTML=''; $('empty').textContent='';
-  try {
-    let ids = []; const tokens = {};
-    for (const t of topics) { const { ids:tids, next } = await searchPage(t, null); ids.push(...tids); tokens[t] = next; }
-    ids = Array.from(new Set(ids));
-    const items = shuffle(await fetchVideos(ids));
-    lastResults = items;
-    lastResultsQuery = '__home__';
-    pageState = { mode:'home', topics, tokens };
-    writeJSON('replay.home', { ts:Date.now(), key, items, tokens });
-    rerenderFilter();
-  } catch (err) {
-    if (cache && cache.items) { useCache(); toast(apiErr(err)); }   // fall back to last cached feed
-    else { flash(apiErr(err)); }
+  const watched = new Set(data.history.map(h => h.id));
+  let items = pool.filter(v => !watched.has(v.id));
+  if (activeFilters.length) {
+    const terms = activeFilters.map(t => t.toLowerCase());
+    items = items.filter(v => {
+      const hay = (v.title + ' ' + v.channel + ' ' + (v.tags||[]).join(' ') + ' ' + (v.description||'')).toLowerCase();
+      return terms.every(t => hay.includes(t));
+    });
   }
+  lastResults = items;
+  rerenderFilter();
 }
+// kept names for existing callers — both now just show the local feed (no API)
+function loadHome() { showFeed(); }
+function runFilterSearch() { showFeed(); }
 
-function hasMore() {
-  if (!pageState) return false;
-  return pageState.mode==='search' ? !!pageState.token : Object.values(pageState.tokens||{}).some(Boolean);
-}
-async function loadMore() {
-  if (!pageState || !secrets.apiKey) return;
-  const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+// The ONLY thing that spends quota: fetch fresh videos into the pool.
+async function findMore() {
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
+  const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = 'Searching YouTube…'; }
   try {
-    let newIds = [];
-    if (pageState.mode==='search') {
-      const { ids, next } = await searchPage(pageState.query, pageState.token);
-      newIds = ids; pageState.token = next;
+    let added = 0;
+    if (activeFilters.length) {
+      const query = activeFilters.join(' ');
+      const token = (pageState && pageState.mode==='search' && pageState.query===query) ? pageState.token : null;
+      const { ids, next } = await searchPage(query, token);
+      added = addToPool(await fetchVideos(ids));
+      pageState = { mode:'search', query, token: next };
+      rememberSearch(query);
     } else {
-      for (const t of pageState.topics) {
-        const tok = pageState.tokens[t]; if (!tok) continue;
-        const { ids, next } = await searchPage(t, tok);
-        newIds.push(...ids); pageState.tokens[t] = next;
-      }
+      const topics = data.prefs.topics || [];
+      if (!topics.length) { toast('Type a filter, or add topics in ⚙, then Find more.'); return; }
+      const tokens = (pageState && pageState.mode==='home') ? pageState.tokens : {};
+      let all = [];
+      for (const t of topics) { const { ids, next } = await searchPage(t, tokens[t] || null); all.push(...ids); tokens[t] = next; }
+      added = addToPool(await fetchVideos(Array.from(new Set(all))));
+      pageState = { mode:'home', topics, tokens };
     }
-    const seen = new Set(lastResults.map(v => v.id));
-    newIds = Array.from(new Set(newIds)).filter(id => !seen.has(id));
-    if (newIds.length) {
-      const more = await fetchVideos(newIds);
-      lastResults = lastResults.concat(pageState.mode==='home' ? shuffle(more) : more);
-    }
-    rerenderFilter();
-  } catch (err) { toast(apiErr(err)); if ($('loadMore')) { $('loadMore').disabled=false; $('loadMore').textContent='＋ Load more'; } }
+    showFeed();
+    toast(added ? `Added ${added} new video${added>1?'s':''} to your feed.` : 'No new videos found — try a different filter.');
+  } catch (err) { toast(apiErr(err)); }
+  finally { const b = $('loadMore'); if (b) { b.disabled = false; b.textContent = '🔍 Find more on YouTube'; } }
 }
 
 function isBlocked(v) {
@@ -717,18 +709,19 @@ function rerenderFilter() {
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
   renderCards(shown);
-  if (hasMore()) {
-    const wrap = document.createElement('div');
-    wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:10px';
-    const b = document.createElement('button');
-    b.id = 'loadMore'; b.className = 'primary'; b.textContent = '＋ Load more';
-    b.onclick = loadMore;
-    wrap.appendChild(b); $('grid').appendChild(wrap);
-  }
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}`, true);
+  // Find-more button is always available on Home — it's the only quota spender.
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:14px';
+  const b = document.createElement('button');
+  b.id = 'loadMore'; b.className = 'primary'; b.textContent = '🔍 Find more on YouTube';
+  b.onclick = findMore;
+  wrap.appendChild(b); $('grid').appendChild(wrap);
+
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'} in your feed`, true);
   $('empty').textContent = shown.length ? '' :
-    (lastResults.length ? `No ${homeSub} here — try the other sub-tab, or ＋ Load more.` :
-     (activeFilters.length ? '' : 'Add topics in ⚙ Preferences, or type a filter above.'));
+    (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
+     (activeFilters.length ? 'Nothing saved matches these filters — tap “🔍 Find more on YouTube”.' :
+      (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.')));
 }
 
 function renderCards(list) {
@@ -792,7 +785,7 @@ function addHistory(v) {
 
 /* ============================== TABS ============================== */
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { setTab(t.dataset.tab); pushNav(); });
-$('refreshBtn').onclick = () => { activeFilters=[]; currentTab='search'; setTab('search'); loadHome(true); pushNav(); };
+$('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMore(); };
 
 function setTab(name){
   currentTab = name;
@@ -800,13 +793,7 @@ function setTab(name){
   $('homeSubtabs').style.display = name==='search' ? 'flex' : 'none';
   renderActiveFilters();
   renderRecentSearches();
-  if (name==='search') {
-    const want = activeFilters.length ? activeFilters.join(' ') : '__home__';
-    if (want === lastResultsQuery && lastResults.length) rerenderFilter();   // already have these results — don't refetch
-    else if (activeFilters.length) runFilterSearch();
-    else loadHome();
-    return;
-  }
+  if (name==='search') { showFeed(); return; }   // free, local feed from the pool
   renderTab();
 }
 function renderTab() {
