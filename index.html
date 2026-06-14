@@ -253,6 +253,8 @@
     <p>Optional. Your history/favorites/watch-later/blocklist sync via a private GitHub Gist. Create a token (scope: <b>gist</b> only) at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Stored only on this device.</p>
     <div class="row"><span class="lbl">GitHub token</span><input id="ghToken" type="text" class="secret" placeholder="ghp_…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
     <div class="row"><span class="lbl">Gist ID</span><input id="gistId" type="text" placeholder="leave empty to auto-create"><button id="connectGh">Connect</button><button id="syncNow">Sync now</button></div>
+    <div class="row"><button id="forcePushBtn">⬆ Upload this device → Gist (overwrite)</button></div>
+    <p style="font-size:12px;color:var(--muted)">Recovery: if a device shows blank, run this on the device that HAS your data to restore the Gist, then “Sync now” on the others.</p>
 
     <hr class="hr">
     <h3>Offline backup</h3>
@@ -1366,21 +1368,39 @@ async function pullSync() {
   if (!res.ok) throw new Error('Gist read failed ('+res.status+')'+ghHint(res.status));
   const gist = await res.json();
   const file = gist.files && gist.files[GIST_FILE];
-  if (!file) return null;
-  const content = file.truncated ? await (await fetch(file.raw_url)).text() : file.content;
-  try { return JSON.parse(content); } catch { return null; }
+  if (!file) return null; // genuinely empty Gist
+  let content = file.content;
+  if (file.truncated) { const r = await fetch(file.raw_url); if (!r.ok) throw new Error('Gist read failed (raw '+r.status+')'); content = await r.text(); }
+  try { return JSON.parse(content); } catch { throw new Error('Gist content unreadable'); } // throw → never overwrite on a bad read
+}
+// Build a payload that's always small enough to read back reliably (drop the heavy pool if needed).
+function syncPayload() {
+  let json = JSON.stringify(data);
+  if (json.length > 800000) { const clone = Object.assign({}, data); delete clone.pool; json = JSON.stringify(clone); }
+  return json;
 }
 async function pushSync() {
   if (!secrets.ghToken || !secrets.gistId) return;
   setSyncState('syncing…');
-  let remote = null;
-  try { remote = await pullSync(); } catch {}
+  let remote;
+  try { remote = await pullSync(); }
+  catch (e) { setSyncState('error', true); toast('Sync paused — couldn’t read your Gist safely, so nothing was overwritten. ('+e.message+')'); return; }
   data = mergeData(data, remote);
   saveData({ touch:false, sync:false });
-  const body = { files: { [GIST_FILE]: { content: JSON.stringify(data) } } };
-  const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify({ files:{ [GIST_FILE]:{ content: syncPayload() } } }) });
   if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'+ghHint(res.status)); }
   setSyncState('synced ✓'); softRefresh();
+}
+// Recovery: overwrite the Gist with THIS device's data (no pull). Use on the device that has your data.
+async function forcePush() {
+  if (!secrets.ghToken || !secrets.gistId) { toast('Connect GitHub first.'); return; }
+  if (!confirm('Overwrite the Gist with THIS device’s data?\nUse this on the device that HAS your data (e.g. your computer).')) return;
+  setSyncState('uploading…');
+  try {
+    const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify({ files:{ [GIST_FILE]:{ content: syncPayload() } } }) });
+    if (!res.ok) throw new Error('Upload failed ('+res.status+')'+ghHint(res.status));
+    setSyncState('synced ✓'); toast('Uploaded this device’s data to the Gist ✓');
+  } catch (e) { setSyncState('error', true); toast(apiErr(e)); }
 }
 // Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
 function softRefresh() {
@@ -1411,6 +1431,7 @@ async function connectGh() {
 }
 $('connectGh').onclick = connectGh;
 $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); pushSync().catch(e=>toast('Sync error: '+e.message)); };
+$('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''}`; }
