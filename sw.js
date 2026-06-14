@@ -1,6 +1,7 @@
-/* RePlay service worker — minimal offline shell.
-   Bumps cache name on each release so updates roll out. */
-const CACHE = 'replay-v1';
+/* RePlay service worker.
+   Network-first for the app shell so updates show immediately when online,
+   with cache fallback so it still works offline. */
+const CACHE = 'replay-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -23,14 +24,14 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  // Never cache API / YouTube / GitHub calls — always go to network.
+  // Let API / YouTube / GitHub calls go straight to the network.
   if (url.origin !== location.origin) return;
-  // App shell: cache-first, fall back to network.
+  // Network-first: always try the live file, fall back to cache when offline.
   e.respondWith(
-    caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
+    fetch(e.request).then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy)).catch(()=>{});
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }).catch(() => caches.match(e.request).then(hit => hit || caches.match('./index.html')))
   );
 });

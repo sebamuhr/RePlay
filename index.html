@@ -333,7 +333,7 @@ function renderBudgets() {
 setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }, 1000);
 
 /* ============================== SETTINGS UI ============================== */
-$('gearBtn').onclick = () => $('panel').classList.toggle('open');
+$('gearBtn').onclick = () => { if ($('panel').classList.contains('open')) history.back(); else { $('panel').classList.add('open'); pushNav(); } };
 $('apiKey').value = secrets.apiKey;
 $('ghToken').value = secrets.ghToken;
 $('gistId').value = secrets.gistId;
@@ -429,7 +429,7 @@ function renderRecentSearches() {
   data.savedSearches.forEach(s => {
     const el = document.createElement('span'); el.className = 'chip';
     el.innerHTML = `<span class="t">🔎 ${escapeHtml(s)}</span> <span class="x">✕</span>`;
-    el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); setTab('search'); };
+    el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); currentTab='search'; setTab('search'); pushNav(); };
     el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.savedSearchesUpdatedAt = Date.now(); saveData(); renderRecentSearches(); };
     wrap.appendChild(el);
   });
@@ -444,6 +444,7 @@ function rememberSearch(q) {
 /* ============================== SEARCH = FILTER BUILDER ============================== */
 let activeFilters = [];
 let lastResults = [];
+let lastResultsQuery = null; // the query lastResults was fetched for ('__home__' or the filter string)
 let currentTab = 'search';
 let homeSub = 'videos'; // 'videos' | 'shorts'
 
@@ -451,6 +452,7 @@ document.querySelectorAll('.subtab').forEach(t => t.onclick = () => {
   homeSub = t.dataset.sub;
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   rerenderFilter();
+  pushNav();
 });
 
 function renderActiveFilters() {
@@ -465,20 +467,22 @@ function renderActiveFilters() {
   });
   if (activeFilters.length) {
     const clr = document.createElement('span'); clr.className = 'chip'; clr.textContent = 'Clear all ✕';
-    clr.onclick = () => { activeFilters = []; renderActiveFilters(); loadHome(); };
+    clr.onclick = () => { activeFilters = []; renderActiveFilters(); loadHome(); pushNav(); };
     wrap.appendChild(clr);
   }
 }
 function addFilter(t) {
   t = (t||'').trim(); if (!t) return;
-  if (currentTab !== 'search') setTab('search');
+  currentTab = 'search';
   if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
-  renderActiveFilters(); runFilterSearch();
+  setTab('search'); // re-renders chrome + runs the new filter search
+  pushNav();
 }
 function removeFilter(t) {
   activeFilters = activeFilters.filter(x => x !== t);
   renderActiveFilters();
   if (activeFilters.length) runFilterSearch(); else loadHome();
+  pushNav();
 }
 $('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; };
 $('q').addEventListener('keydown', e => { if (e.key==='Enter') { addFilter($('q').value); $('q').value=''; } });
@@ -519,6 +523,7 @@ async function runFilterSearch() {
   try {
     const { ids, next } = await searchPage(query, null);
     lastResults = ids.length ? await fetchVideos(ids) : [];
+    lastResultsQuery = query;
     pageState = { mode:'search', query, token: next };
     rememberSearch(query);
     rerenderFilter();
@@ -533,7 +538,7 @@ async function loadHome(force=false) {
   const key = topics.slice().sort().join('|');
   const cache = readJSON('replay.home', null);
   if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) {
-    lastResults = cache.items; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); return;
+    lastResults = cache.items; lastResultsQuery = '__home__'; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); return;
   }
   flash('Loading your topics…'); $('grid').innerHTML=''; $('empty').textContent='';
   try {
@@ -542,6 +547,7 @@ async function loadHome(force=false) {
     ids = Array.from(new Set(ids));
     const items = shuffle(await fetchVideos(ids));
     lastResults = items;
+    lastResultsQuery = '__home__';
     pageState = { mode:'home', topics, tokens };
     writeJSON('replay.home', { ts:Date.now(), key, items, tokens });
     rerenderFilter();
@@ -681,8 +687,8 @@ function addHistory(v) {
 }
 
 /* ============================== TABS ============================== */
-document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => setTab(t.dataset.tab));
-$('refreshBtn').onclick = () => { activeFilters=[]; renderActiveFilters(); setTab('search'); loadHome(true); };
+document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { setTab(t.dataset.tab); pushNav(); });
+$('refreshBtn').onclick = () => { activeFilters=[]; currentTab='search'; setTab('search'); loadHome(true); pushNav(); };
 
 function setTab(name){
   currentTab = name;
@@ -690,7 +696,13 @@ function setTab(name){
   $('homeSubtabs').style.display = name==='search' ? 'flex' : 'none';
   renderActiveFilters();
   renderRecentSearches();
-  if (name==='search') { if (activeFilters.length) runFilterSearch(); else loadHome(); return; }
+  if (name==='search') {
+    const want = activeFilters.length ? activeFilters.join(' ') : '__home__';
+    if (want === lastResultsQuery && lastResults.length) rerenderFilter();   // already have these results — don't refetch
+    else if (activeFilters.length) runFilterSearch();
+    else loadHome();
+    return;
+  }
   renderTab();
 }
 function renderTab() {
@@ -706,16 +718,19 @@ function renderTab() {
 
 /* ============================== PLAYER + BUDGET GATE ============================== */
 let playing = null;
-function play(v) {
+function play(v) { openPlayer(v, false); }
+function openPlayer(v, restore) {
   const bucket = v.isShort ? 'shorts' : 'videos';
-  if (budgetLocked(bucket)) {
+  if (!restore) {
+    if (budgetLocked(bucket)) {
+      renderBudgets();
+      toast(`${bucket==='shorts'?'Shorts':'Videos'} limit reached — back in ${fmtCountdown(budgetUnlockMs(bucket))} 🌙`);
+      return;
+    }
+    budgetRecord(bucket);
+    addHistory(v);          // saves + budget state persisted together
     renderBudgets();
-    toast(`${bucket==='shorts'?'Shorts':'Videos'} limit reached — back in ${fmtCountdown(budgetUnlockMs(bucket))} 🌙`);
-    return;
   }
-  budgetRecord(bucket);
-  addHistory(v);          // saves + budget state persisted together
-  renderBudgets();
   playing = v;
   const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
   $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
@@ -723,6 +738,7 @@ function play(v) {
   $('ptitle').textContent = v.title;
   syncPlayerButtons();
   $('modal').classList.add('open');
+  if (!restore) pushNav();  // opening a video is a back-able step
 }
 function syncPlayerButtons() {
   if (!playing) return;
@@ -732,11 +748,33 @@ function syncPlayerButtons() {
 }
 $('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
 $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
-$('pBlock').onclick = () => { if(!playing) return; addBlock(playing.channel.toLowerCase()); closeModal(); toast(`Hiding “${playing.channel}” from now on.`); };
-function closeModal(){ $('modal').classList.remove('open'); $('iframe').src=''; if(currentTab!=='search') renderTab(); else rerenderFilter(); }
-$('closeModal').onclick = closeModal;
-$('modal').addEventListener('click', e => { if (e.target===$('modal')) closeModal(); });
-document.addEventListener('keydown', e => { if (e.key==='Escape' && $('modal').classList.contains('open')) closeModal(); });
+$('pBlock').onclick = () => { if(!playing) return; const ch = playing.channel; addBlock(ch.toLowerCase()); history.back(); toast(`Hiding “${ch}” from now on.`); };
+function closePlayerUI(){ $('modal').classList.remove('open'); $('iframe').src=''; }
+$('closeModal').onclick = () => history.back();
+$('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
+document.addEventListener('keydown', e => { if (e.key==='Escape' && $('modal').classList.contains('open')) history.back(); });
+
+/* ============================== HISTORY / BACK BUTTON ============================== */
+function navSnapshot() {
+  return {
+    tab: currentTab,
+    sub: homeSub,
+    filters: activeFilters.slice(),
+    video: ($('modal').classList.contains('open') && playing) ? stripVideo(playing) : null,
+    panel: $('panel').classList.contains('open'),
+  };
+}
+function pushNav() { history.pushState(navSnapshot(), ''); }
+function applyNav(s) {
+  s = s || { tab:'search', sub:'videos', filters:[], video:null, panel:false };
+  activeFilters = (s.filters || []).slice();
+  homeSub = s.sub || 'videos';
+  $('panel').classList.toggle('open', !!s.panel);
+  setTab(s.tab || 'search');                 // restores tab + results (no refetch if cached)
+  if (s.video) openPlayer(s.video, true);    // restore player without re-counting budget
+  else if ($('modal').classList.contains('open')) closePlayerUI();
+}
+window.addEventListener('popstate', e => applyNav(e.state));
 
 /* ============================== GITHUB SYNC ============================== */
 const GIST_FILE = 'replay-data.json';
@@ -867,6 +905,7 @@ function refreshAll(){ renderBlocks(); renderTopics(); renderBudgets(); renderBu
 
 (async function init(){
   refreshAll();
+  history.replaceState(navSnapshot(), ''); // base history entry so Back always has somewhere to land
   if (location.protocol === 'file:') toast('Heads up: open RePlay from a URL (GitHub Pages or localhost), not a file:// path — file:// blocks YouTube playback (error 153).');
   if (!secrets.apiKey) $('panel').classList.add('open');
   if (secrets.ghToken && secrets.gistId) {
