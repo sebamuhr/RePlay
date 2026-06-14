@@ -88,9 +88,13 @@
   .actions button.remove:hover { border-color:var(--accent); }
 
   /* settings panel */
-  .panel { display:none; max-width:1100px; margin:12px auto 0; background:var(--card);
-    border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .panel { display:none; position:fixed; inset:0; z-index:60; background:var(--bg);
+    overflow-y:auto; -webkit-overflow-scrolling:touch; padding:0 16px 48px; overscroll-behavior:contain; }
   .panel.open { display:block; }
+  .panelhead { position:sticky; top:0; background:var(--bg); display:flex; justify-content:space-between;
+    align-items:center; padding:14px 0; border-bottom:1px solid var(--line); margin-bottom:8px; z-index:1; max-width:900px; margin-left:auto; margin-right:auto; }
+  .panelhead b { font-size:16px; }
+  .panel > *:not(.panelhead) { max-width:900px; margin-left:auto; margin-right:auto; }
   .panel h3 { margin:18px 0 8px; font-size:14px; }
   .panel h3:first-child { margin-top:0; }
   .panel p { color:var(--muted); font-size:12px; margin:0 0 10px; }
@@ -118,6 +122,10 @@
   /* Shorts: portrait, full-height player */
   .modal.shorts .player { max-width:600px; }
   .modal.shorts .frame { aspect-ratio:9/16; height:82vh; width:auto; max-width:100%; margin:0 auto; }
+  .shortnav { display:none; position:absolute; right:10px; z-index:3; width:44px; height:44px; border-radius:50%;
+    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.25); font-size:16px; cursor:pointer; }
+  .shortnav.up { top:10px; } .shortnav.down { bottom:10px; }
+  .modal.shorts .shortnav { display:block; }
   .pchannel { color:var(--muted); font-size:13px; margin-top:10px; }
   .pdesc { white-space:pre-wrap; word-break:break-word; color:#d6d6d6; font-size:13px; line-height:1.55; margin-top:10px; border-top:1px solid var(--line); padding-top:12px; }
   .pdesc a { color:var(--blue); }
@@ -206,6 +214,7 @@
 
   <!-- SETTINGS PANEL -->
   <div class="panel" id="panel">
+    <div class="panelhead"><b>Settings</b><button id="closePanel" type="button">✕ Close</button></div>
     <h3>YouTube API key</h3>
     <p>Free, not a login. Create one at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credentials</a> and enable “YouTube Data API v3”. Stored only on this device.</p>
     <div class="row"><input id="apiKey" type="text" class="secret" placeholder="Paste YouTube API key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button id="saveKey">Save</button></div>
@@ -277,7 +286,11 @@
 <!-- PLAYER -->
 <div class="modal" id="modal">
   <div class="player">
-    <div class="frame"><iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+    <div class="frame" id="frame">
+      <iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
+      <button class="shortnav up" id="shortPrev" type="button" title="Previous short">▲</button>
+      <button class="shortnav down" id="shortNext" type="button" title="Next short">▼</button>
+    </div>
     <div class="controls">
       <div class="ptitle" id="ptitle"></div>
       <div class="actions">
@@ -290,10 +303,13 @@
         <button id="closeModal">Close ✕</button>
       </div>
     </div>
-    <div class="pchannel" id="pchannel"></div>
-    <div class="pdesc collapsed" id="pdesc"></div>
-    <button class="desc-toggle" id="descToggle" type="button">Show more</button>
-    <div class="related" id="related"></div>
+    <button class="desc-toggle" id="detailsToggle" type="button" style="display:none">▾ Show details</button>
+    <div id="playerDetails">
+      <div class="pchannel" id="pchannel"></div>
+      <div class="pdesc collapsed" id="pdesc"></div>
+      <button class="desc-toggle" id="descToggle" type="button">Show more</button>
+      <div class="related" id="related"></div>
+    </div>
   </div>
 </div>
 
@@ -700,7 +716,7 @@ async function fetchVideos(ids) {
       out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle, channelId:v.snippet.channelId,
         description:v.snippet.description||'', tags:v.snippet.tags||[],
         thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
-        duration:dur, isShort: dur>0 && dur<60, publishedAt: v.snippet.publishedAt });
+        duration:dur, isShort: dur>0 && dur<=60, publishedAt: v.snippet.publishedAt });
     });
   }
   return out;
@@ -1193,8 +1209,20 @@ function renderTab() {
 
 /* ============================== PLAYER + BUDGET GATE ============================== */
 let playing = null;
-function play(v) { openPlayer(v, false); }
-function openPlayer(v, restore) {
+let shortsQueue = [], shortsIndex = -1;
+function play(v) {
+  if (v.isShort) buildShortsQueue(v);   // user click on a short → set up the swipe queue
+  openPlayer(v, false);
+}
+function buildShortsQueue(v) {
+  let src = currentTab === 'search' ? lastResults
+    : ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
+  const shorts = visibleList(src, false).filter(x => x.isShort);
+  shortsQueue = shorts.length ? shorts : [v];
+  shortsIndex = Math.max(0, shortsQueue.findIndex(x => x.id === v.id));
+}
+// openPlayer(v, restore, replace): replace=true updates history in place (used when swiping shorts)
+function openPlayer(v, restore, replace) {
   const bucket = v.isShort ? 'shorts' : 'videos';
   if (!restore) {
     if (budgetLocked(bucket)) {
@@ -1207,8 +1235,14 @@ function openPlayer(v, restore) {
     renderBudgets();
   }
   playing = v;
+  // Recreate the iframe each time (src set before insert) so the YT player never pollutes Back history.
   const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
-  $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
+  const frame = $('frame');
+  const old = $('iframe'); if (old) old.remove();
+  const ifr = document.createElement('iframe');
+  ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
+  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
+  frame.insertBefore(ifr, frame.firstChild);
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
   const chLink = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
@@ -1222,10 +1256,23 @@ function openPlayer(v, restore) {
   requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
   renderRelated(v);
   syncPlayerButtons();
-  $('modal').classList.toggle('shorts', !!v.isShort); // portrait player for Shorts
+  // Shorts: portrait player; hide channel/description/related until "Show details" is tapped.
+  $('modal').classList.toggle('shorts', !!v.isShort);
+  if (v.isShort) { $('playerDetails').style.display = 'none'; $('detailsToggle').style.display = ''; $('detailsToggle').textContent = '▾ Show details'; }
+  else { $('playerDetails').style.display = ''; $('detailsToggle').style.display = 'none'; }
   $('modal').classList.add('open');
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
-  if (!restore) pushNav();  // opening a video is a back-able step
+  if (replace) history.replaceState(navSnapshot(), '');
+  else if (!restore) pushNav();  // opening a video is a back-able step
+}
+// Move to the next/previous short in the queue (Back still returns to the feed, not per-short).
+function shortStep(dir) {
+  if (!playing || !playing.isShort) return;
+  const i = shortsIndex + dir;
+  if (i < 0 || i >= shortsQueue.length) { toast(dir>0 ? 'No more shorts here.' : 'Start of the list.'); return; }
+  if (budgetLocked('shorts')) { renderBudgets(); toast(`Shorts limit reached — back in ${fmtCountdown(budgetUnlockMs('shorts'))} 🌙`); return; }
+  shortsIndex = i;
+  openPlayer(shortsQueue[i], false, true);
 }
 // Related videos pulled from your own pool (free, no API).
 function renderRelated(v) {
@@ -1265,10 +1312,36 @@ $('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isF
 $('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
 $('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
 $('descToggle').onclick = () => { const collapsed = $('pdesc').classList.toggle('collapsed'); $('descToggle').textContent = collapsed ? 'Show more' : 'Show less'; };
-function closePlayerUI(){ $('modal').classList.remove('open'); $('iframe').src=''; }
+$('detailsToggle').onclick = () => { const d = $('playerDetails'); const show = d.style.display === 'none'; d.style.display = show ? '' : 'none'; $('detailsToggle').textContent = show ? '▴ Hide details' : '▾ Show details'; };
+function closePlayerUI(){ $('modal').classList.remove('open'); $('modal').classList.remove('shorts'); const f=$('frame'); const i=$('iframe'); if(i) i.remove(); }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
-document.addEventListener('keydown', e => { if (e.key==='Escape' && $('modal').classList.contains('open')) history.back(); });
+document.addEventListener('keydown', e => {
+  if (!$('modal').classList.contains('open')) return;
+  if (e.key==='Escape') { history.back(); return; }
+  if ($('modal').classList.contains('shorts')) {
+    if (e.key==='ArrowDown') { e.preventDefault(); shortStep(1); }
+    else if (e.key==='ArrowUp') { e.preventDefault(); shortStep(-1); }
+  }
+});
+// Shorts swipe / scroll navigation (next = up-swipe / scroll down)
+$('shortNext').onclick = () => shortStep(1);
+$('shortPrev').onclick = () => shortStep(-1);
+let shortWheelLock = false;
+$('modal').addEventListener('wheel', e => {
+  if (!$('modal').classList.contains('shorts')) return;
+  e.preventDefault();
+  if (shortWheelLock) return; shortWheelLock = true; setTimeout(() => shortWheelLock = false, 500);
+  shortStep(e.deltaY > 0 ? 1 : -1);
+}, { passive:false });
+let touchStartY = null;
+$('modal').addEventListener('touchstart', e => { if ($('modal').classList.contains('shorts')) touchStartY = e.touches[0].clientY; }, { passive:true });
+$('modal').addEventListener('touchend', e => {
+  if (touchStartY == null || !$('modal').classList.contains('shorts')) return;
+  const dy = e.changedTouches[0].clientY - touchStartY; touchStartY = null;
+  if (Math.abs(dy) > 60) shortStep(dy < 0 ? 1 : -1);  // swipe up → next
+});
+$('closePanel').onclick = () => history.back();
 
 /* ============================== HISTORY / BACK BUTTON ============================== */
 function navSnapshot() {
