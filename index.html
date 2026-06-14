@@ -611,6 +611,12 @@ async function fetchVideos(ids) {
 
 let pageState = null; // { mode:'search'|'home', query?, topics?, token?, tokens? }
 
+function apiErr(e) {
+  return /quota/i.test(e && e.message || '')
+    ? 'Daily YouTube quota reached (~100 searches/day on the free key). It resets at midnight US-Pacific — cached results still work until then.'
+    : ('Error: ' + (e && e.message || e));
+}
+
 async function runFilterSearch() {
   if (!activeFilters.length) return loadHome();
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
@@ -623,7 +629,7 @@ async function runFilterSearch() {
     pageState = { mode:'search', query, token: next };
     rememberSearch(query);
     rerenderFilter();
-  } catch (err) { flash('Error: ' + err.message); }
+  } catch (err) { flash(apiErr(err)); toast(apiErr(err)); }
 }
 
 async function loadHome(force=false) {
@@ -633,9 +639,8 @@ async function loadHome(force=false) {
   if (!secrets.apiKey) { $('panel').classList.add('open'); flash(''); $('empty').textContent='Add your YouTube API key in ⚙ to load your feed.'; return; }
   const key = topics.slice().sort().join('|');
   const cache = readJSON('replay.home', null);
-  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) {
-    lastResults = cache.items; lastResultsQuery = '__home__'; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); return;
-  }
+  const useCache = () => { lastResults = cache.items; lastResultsQuery = '__home__'; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); };
+  if (!force && cache && cache.key===key && Date.now()-cache.ts < 24*3600e3) { useCache(); return; } // 24h cache to save quota
   flash('Loading your topics…'); $('grid').innerHTML=''; $('empty').textContent='';
   try {
     let ids = []; const tokens = {};
@@ -647,7 +652,10 @@ async function loadHome(force=false) {
     pageState = { mode:'home', topics, tokens };
     writeJSON('replay.home', { ts:Date.now(), key, items, tokens });
     rerenderFilter();
-  } catch (err) { flash('Error: ' + err.message); }
+  } catch (err) {
+    if (cache && cache.items) { useCache(); toast(apiErr(err)); }   // fall back to last cached feed
+    else { flash(apiErr(err)); }
+  }
 }
 
 function hasMore() {
@@ -676,7 +684,7 @@ async function loadMore() {
       lastResults = lastResults.concat(pageState.mode==='home' ? shuffle(more) : more);
     }
     rerenderFilter();
-  } catch (err) { flash('Error: ' + err.message); if ($('loadMore')) { $('loadMore').disabled=false; $('loadMore').textContent='＋ Load more'; } }
+  } catch (err) { toast(apiErr(err)); if ($('loadMore')) { $('loadMore').disabled=false; $('loadMore').textContent='＋ Load more'; } }
 }
 
 function isBlocked(v) {
