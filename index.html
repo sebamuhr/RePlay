@@ -121,18 +121,10 @@
   .suggest:hover { color:var(--fg); border-color:#555; }
   .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
 
-  /* shorts feed */
-  .shortsfeed { display:none; height:calc(100vh - 180px); min-height:420px; overflow-y:auto; scroll-snap-type:y mandatory; border:1px solid var(--line); border-radius:12px; background:#000; }
-  .short { height:100%; scroll-snap-align:start; position:relative; display:flex; align-items:center; justify-content:center; }
-  .short-inner { position:relative; height:100%; aspect-ratio:9/16; max-width:100%; background:#000; }
-  .short-inner img.short-thumb { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
-  .short-inner iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
-  .short-meta { position:absolute; left:0; right:0; bottom:0; padding:14px; background:linear-gradient(transparent,rgba(0,0,0,.85)); pointer-events:none; }
-  .short-title { font-size:14px; line-height:1.3; margin-bottom:4px; }
-  .short-ch { font-size:12px; color:#cfcfcf; }
-  .short-lock { display:none; position:absolute; inset:0; background:rgba(0,0,0,.93); color:var(--warn); text-align:center; align-items:center; justify-content:center; font-size:16px; line-height:1.6; padding:20px; }
-  .short.locked .short-lock { display:flex; }
-  .short.locked iframe { display:none; }
+  /* home sub-tabs (Videos / Shorts) */
+  .subtabs { max-width:1100px; margin:10px auto 0; display:flex; gap:6px; }
+  .subtab { background:var(--card); border:1px solid var(--line); color:var(--muted); padding:6px 14px; border-radius:8px; font-size:13px; cursor:pointer; }
+  .subtab.active { color:var(--fg); border-color:#444; background:#181818; }
 </style>
 </head>
 <body>
@@ -147,13 +139,17 @@
   <div class="subbar">
     <div class="tabs">
       <button class="tab active" data-tab="search">Home</button>
-      <button class="tab" data-tab="shorts">Shorts</button>
       <button class="tab" data-tab="history">History</button>
       <button class="tab" data-tab="later">Watch Later</button>
       <button class="tab" data-tab="favorites">Favorites</button>
       <button class="tab" id="refreshBtn" title="Refresh feed">⟳</button>
     </div>
     <div class="budgets" id="budgets"></div>
+  </div>
+
+  <div class="subtabs" id="homeSubtabs">
+    <button class="subtab active" data-sub="videos">🎬 Videos</button>
+    <button class="subtab" data-sub="shorts">🩳 Shorts</button>
   </div>
 
   <div class="chips" id="activeFilters"></div>
@@ -173,8 +169,8 @@
 
     <hr class="hr">
     <h3>Shorts</h3>
-    <p>Anything under 60 seconds is a Short.</p>
-    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts from Home feed</label>
+    <p>Anything under 60 seconds is a Short. They live in their own sub-tab on Home.</p>
+    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts entirely (no Shorts sub-tab)</label>
 
     <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
     <div id="budgetPrefs"></div>
@@ -202,7 +198,6 @@
   <div class="chips" id="recentSearches" style="display:none"></div>
   <div class="status" id="status"></div>
   <div class="grid" id="grid"></div>
-  <div class="shortsfeed" id="shortsFeed"></div>
   <div class="empty" id="empty"></div>
 </main>
 
@@ -332,14 +327,7 @@ function renderBudgets() {
   });
 }
 // tick to update countdowns / auto-unlock
-setInterval(() => {
-  if (document.visibilityState!=='visible') return;
-  renderBudgets();
-  if (currentTab==='shorts' && activeShortEl && activeShortEl.classList.contains('locked')) {
-    if (budgetLocked('shorts')) activeShortEl.querySelector('.cd').textContent = 'Back in ' + fmtCountdown(budgetUnlockMs('shorts'));
-    else activateShort(activeShortEl);
-  }
-}, 1000);
+setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }, 1000);
 
 /* ============================== SETTINGS UI ============================== */
 $('gearBtn').onclick = () => $('panel').classList.toggle('open');
@@ -454,6 +442,13 @@ function rememberSearch(q) {
 let activeFilters = [];
 let lastResults = [];
 let currentTab = 'search';
+let homeSub = 'videos'; // 'videos' | 'shorts'
+
+document.querySelectorAll('.subtab').forEach(t => t.onclick = () => {
+  homeSub = t.dataset.sub;
+  document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
+  rerenderFilter();
+});
 
 function renderActiveFilters() {
   const wrap = $('activeFilters'); wrap.innerHTML = '';
@@ -558,15 +553,27 @@ function visibleList(items, applyHideShorts=true) {
 
 function rerenderFilter() {
   if (currentTab !== 'search') return renderTab();
-  const shown = visibleList(lastResults);
-  const hidden = lastResults.length - shown.length;
+  const hideShorts = data.prefs.hideShorts;
+  if (hideShorts) homeSub = 'videos';
+  // sub-tab visibility: Shorts hidden entirely if pref set
+  $('homeSubtabs').style.display = 'flex';
+  document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
+  document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
+
+  const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
+  const videos = allowed.filter(v => !v.isShort);
+  const shorts = allowed.filter(v => v.isShort);
+  const shown = homeSub==='shorts' ? shorts : videos;
+
+  // reflect counts on the sub-tabs
+  document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
+  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
+
   renderCards(shown);
-  let msg = `<b>${shown.length}</b> videos`;
-  if (hidden) msg += ` · <b>${hidden}</b> hidden by your filters`;
-  flash(msg, true);
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}`, true);
   $('empty').textContent = shown.length ? '' :
-    (lastResults.length ? 'Everything here was filtered out by your blocks/Shorts setting.' :
-     'Search a topic above to start.');
+    (lastResults.length ? `No ${homeSub} here — try the other sub-tab or a different filter.` :
+     (activeFilters.length ? '' : 'Add topics in ⚙ Preferences, or type a filter above.'));
 }
 
 function renderCards(list) {
@@ -630,23 +637,19 @@ function addHistory(v) {
 
 /* ============================== TABS ============================== */
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => setTab(t.dataset.tab));
-$('refreshBtn').onclick = () => { if (currentTab==='shorts') loadShorts(true); else { activeFilters=[]; renderActiveFilters(); loadHome(true); } };
+$('refreshBtn').onclick = () => { activeFilters=[]; renderActiveFilters(); setTab('search'); loadHome(true); };
 
 function setTab(name){
   currentTab = name;
   document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-  const isShorts = name==='shorts';
-  $('shortsFeed').style.display = isShorts ? 'block' : 'none';
-  $('grid').style.display = isShorts ? 'none' : 'grid';
+  $('homeSubtabs').style.display = name==='search' ? 'flex' : 'none';
   renderActiveFilters();
   renderRecentSearches();
-  if (isShorts) { flash(''); $('empty').textContent=''; loadShorts(); return; }
   if (name==='search') { if (activeFilters.length) runFilterSearch(); else loadHome(); return; }
   renderTab();
 }
 function renderTab() {
   if (currentTab==='search') { rerenderFilter(); return; }
-  if (currentTab==='shorts') { loadShorts(); return; }
   const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
   const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
   const shown = visibleList(map[currentTab], false);
@@ -654,74 +657,6 @@ function renderTab() {
   const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
   flash(`<b>${shown.length}</b> in ${titles[currentTab]}${extra}`, true);
   $('empty').textContent = shown.length ? '' : `Nothing in ${titles[currentTab]} yet.`;
-}
-
-/* ============================== SHORTS FEED ============================== */
-let shortsObserver = null, activeShortEl = null;
-const countedShorts = new Set();
-
-async function loadShorts(force=false) {
-  const feed = $('shortsFeed');
-  const topics = data.prefs.topics || [];
-  if (!topics.length) { feed.innerHTML = '<div class="empty">Add topics in ⚙ Preferences to fill your Shorts feed.</div>'; return; }
-  if (!secrets.apiKey) { $('panel').classList.add('open'); feed.innerHTML = '<div class="empty">Add your YouTube API key in ⚙ to load Shorts.</div>'; return; }
-  const key = topics.slice().sort().join('|');
-  const cache = readJSON('replay.shorts', null);
-  let items;
-  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) {
-    items = cache.items;
-  } else {
-    feed.innerHTML = '<div class="empty">Loading Shorts…</div>';
-    try {
-      let ids = [];
-      for (const t of topics) ids.push(...await searchIds(t + ' #shorts', 12));
-      ids = Array.from(new Set(ids));
-      items = (await fetchVideos(ids)).filter(v => v.isShort);
-      shuffle(items);
-      writeJSON('replay.shorts', { ts:Date.now(), key, items });
-    } catch (err) { feed.innerHTML = '<div class="empty">Error: ' + escapeHtml(err.message) + '</div>'; return; }
-  }
-  renderShortsFeed(items.filter(v => !isBlocked(v)));
-}
-
-function renderShortsFeed(items) {
-  const feed = $('shortsFeed'); feed.innerHTML = '';
-  countedShorts.clear(); activeShortEl = null;
-  if (!items.length) { feed.innerHTML = '<div class="empty">No Shorts found for your topics. Add more topics, or tap ⟳ to refresh.</div>'; return; }
-  items.forEach(v => {
-    const s = document.createElement('div'); s.className = 'short'; s._video = v;
-    s.innerHTML = `
-      <div class="short-inner">
-        <img class="short-thumb" src="${v.thumb}" alt="">
-        <iframe allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
-        <div class="short-lock"><div>🌙 Shorts limit reached<br><span class="cd"></span></div></div>
-        <div class="short-meta"><div class="short-title">${escapeHtml(v.title)}</div><div class="short-ch">${escapeHtml(v.channel)}</div></div>
-      </div>`;
-    feed.appendChild(s);
-  });
-  if (shortsObserver) shortsObserver.disconnect();
-  shortsObserver = new IntersectionObserver(onShortIntersect, { root: feed, threshold: 0.6 });
-  feed.querySelectorAll('.short').forEach(el => shortsObserver.observe(el));
-}
-
-function onShortIntersect(entries) {
-  entries.forEach(e => {
-    const el = e.target;
-    if (e.isIntersecting) { activeShortEl = el; activateShort(el); }
-    else { const f = el.querySelector('iframe'); if (f) f.src=''; const th = el.querySelector('.short-thumb'); if (th) th.style.display=''; }
-  });
-}
-function activateShort(el) {
-  const v = el._video;
-  if (budgetLocked('shorts')) {
-    el.classList.add('locked');
-    el.querySelector('.cd').textContent = 'Back in ' + fmtCountdown(budgetUnlockMs('shorts'));
-    return;
-  }
-  el.classList.remove('locked');
-  if (!countedShorts.has(v.id)) { countedShorts.add(v.id); budgetRecord('shorts'); addHistory(v); renderBudgets(); }
-  const f = el.querySelector('iframe');
-  if (f && !f.src) { f.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1&playsinline=1`; el.querySelector('.short-thumb').style.display='none'; }
 }
 
 /* ============================== PLAYER + BUDGET GATE ============================== */
@@ -824,7 +759,14 @@ async function pushSync() {
   const body = { files: { [GIST_FILE]: { content: JSON.stringify(data) } } };
   const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(body) });
   if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'+ghHint(res.status)); }
-  setSyncState('synced ✓'); refreshAll();
+  setSyncState('synced ✓'); softRefresh();
+}
+// Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
+function softRefresh() {
+  renderBlocks(); renderTopics(); renderBudgets(); renderBudgetPrefs();
+  $('hideShorts').checked = data.prefs.hideShorts;
+  renderActiveFilters(); renderRecentSearches();
+  if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
 async function connectGh() {
   secrets.ghToken = $('ghToken').value.trim();
