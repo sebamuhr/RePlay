@@ -590,8 +590,8 @@ $('q').addEventListener('keydown', e => {
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
-async function searchPage(query, pageToken) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(query)}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
+async function searchPage(query, pageToken, order) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(query)}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
   const d = await (await fetch(url)).json();
   if (d.error) throw new Error(d.error.message || 'API error');
   return { ids: (d.items||[]).map(i => i.id.videoId).filter(Boolean), next: d.nextPageToken || null };
@@ -652,29 +652,31 @@ function loadHome() { showFeed(); }
 function runFilterSearch() { showFeed(); }
 
 // The ONLY thing that spends quota: fetch fresh videos into the pool.
-async function findMore() {
+// order='date' (⟳) = newest uploads; default = more relevant results.
+async function findMore(order) {
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
-  const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = 'Searching YouTube…'; }
+  const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = order ? 'Checking for new…' : 'Searching YouTube…'; }
   try {
     let added = 0;
     if (activeFilters.length) {
       const query = activeFilters.join(' ');
-      const token = (pageState && pageState.mode==='search' && pageState.query===query) ? pageState.token : null;
-      const { ids, next } = await searchPage(query, token);
+      // order=date always starts fresh (page 1, newest); otherwise continue paginating
+      const token = (!order && pageState && pageState.mode==='search' && pageState.query===query) ? pageState.token : null;
+      const { ids, next } = await searchPage(query, token, order);
       added = addToPool(await fetchVideos(ids));
-      pageState = { mode:'search', query, token: next };
+      if (!order) pageState = { mode:'search', query, token: next };
       rememberSearch(query);
     } else {
       const topics = data.prefs.topics || [];
       if (!topics.length) { toast('Type a filter, or add topics in ⚙, then Find more.'); return; }
-      const tokens = (pageState && pageState.mode==='home') ? pageState.tokens : {};
+      const tokens = (!order && pageState && pageState.mode==='home') ? pageState.tokens : {};
       let all = [];
-      for (const t of topics) { const { ids, next } = await searchPage(t, tokens[t] || null); all.push(...ids); tokens[t] = next; }
+      for (const t of topics) { const { ids, next } = await searchPage(t, tokens[t] || null, order); all.push(...ids); tokens[t] = next; }
       added = addToPool(await fetchVideos(Array.from(new Set(all))));
-      pageState = { mode:'home', topics, tokens };
+      if (!order) pageState = { mode:'home', topics, tokens };
     }
     showFeed();
-    toast(added ? `Added ${added} new video${added>1?'s':''} to your feed.` : 'No new videos found — try a different filter.');
+    toast(added ? `Added ${added} ${order?'new ':''}video${added>1?'s':''} to your feed.` : (order ? 'No new uploads found.' : 'No more found — try a different filter.'));
   } catch (err) { toast(apiErr(err)); }
   finally { const b = $('loadMore'); if (b) { b.disabled = false; b.textContent = '🔍 Find more on YouTube'; } }
 }
@@ -781,11 +783,12 @@ function addHistory(v) {
   data.history = data.history.slice(0,2000);
   delete data.deleted.history[v.id];  // re-watching un-deletes it
   saveData();
+  if (pool.some(x=>x.id===v.id)) { pool = pool.filter(x=>x.id!==v.id); savePool(); } // watched → leaves the unwatched pool
 }
 
 /* ============================== TABS ============================== */
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { setTab(t.dataset.tab); pushNav(); });
-$('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMore(); };
+$('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMore('date'); }; // ⟳ = newest uploads
 
 function setTab(name){
   currentTab = name;
