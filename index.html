@@ -124,6 +124,12 @@
   .rel-card .rt { font-size:12px; line-height:1.3; margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .statusbar { display:flex; gap:10px; align-items:center; }
   .poolstat { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .chbanner { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin-bottom:14px; }
+  .chbanner .chtitle { font-size:15px; font-weight:600; }
+  .chbanner .chactions { display:flex; gap:8px; flex-wrap:wrap; }
+  .chbanner button { padding:7px 11px; font-size:13px; }
+  .channel .chlink { color:var(--muted); }
+  .channel .chlink:hover, .pchannel .chlink { color:var(--blue); }
   .player iframe { width:100%; height:100%; border:0; }
   .player .controls { display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
   .player .ptitle { font-size:15px; flex:1; min-width:200px; }
@@ -248,6 +254,7 @@
 
 <main>
   <div class="chips" id="recentSearches" style="display:none"></div>
+  <div id="channelBanner" class="chbanner" style="display:none"></div>
   <div class="status" id="status"></div>
   <div class="grid" id="grid"></div>
   <div class="empty" id="empty"></div>
@@ -617,7 +624,7 @@ function renderActiveFilters() {
 }
 function addFilter(t) {
   t = (t||'').trim(); if (!t) return;
-  currentTab = 'search';
+  currentTab = 'search'; exitChannel(); // filtering leaves any channel view
   if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
   setTab('search'); // local feed, free
   pushNav();
@@ -719,16 +726,23 @@ function allTrackedChannels() {
 }
 
 // The free, local feed: pool minus already-watched, filtered by your search terms.
+let channelView = null, channelVideos = [], channelCache = { id:null, items:[] };
+
 function showFeed() {
   if (currentTab !== 'search') return;
-  const watched = new Set(data.history.map(h => h.id));
-  let items = pool.filter(v => !watched.has(v.id));
-  if (activeFilters.length) {
-    const terms = activeFilters.map(t => t.toLowerCase());
-    items = items.filter(v => {
-      const hay = (v.title + ' ' + v.channel + ' ' + (v.tags||[]).join(' ') + ' ' + (v.description||'')).toLowerCase();
-      return terms.every(t => hay.includes(t));
-    });
+  let items;
+  if (channelView) {
+    items = channelVideos.filter(v => !isBlocked(v)); // viewing a single channel
+  } else {
+    const watched = new Set(data.history.map(h => h.id));
+    items = pool.filter(v => !watched.has(v.id));
+    if (activeFilters.length) {
+      const terms = activeFilters.map(t => t.toLowerCase());
+      items = items.filter(v => {
+        const hay = (v.title + ' ' + v.channel + ' ' + (v.tags||[]).join(' ') + ' ' + (v.description||'')).toLowerCase();
+        return terms.every(t => hay.includes(t));
+      });
+    }
   }
   lastResults = items;
   rerenderFilter();
@@ -736,6 +750,44 @@ function showFeed() {
 // kept names for existing callers — both now just show the local feed (no API)
 function loadHome() { showFeed(); }
 function runFilterSearch() { showFeed(); }
+
+function exitChannel() { channelView = null; channelVideos = []; }
+async function openChannel(id, title, restore) {
+  if (!id) return;
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key ⚙'); return; }
+  currentTab = 'search'; activeFilters = []; channelView = { id, title };
+  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab==='search'));
+  $('homeSubtabs').style.display = 'flex';
+  renderActiveFilters(); renderRecentSearches();
+  if (!restore) pushNav();
+  if (channelCache.id === id && channelCache.items.length) { channelVideos = channelCache.items; showFeed(); return; }
+  flash('Loading channel…'); $('grid').innerHTML=''; $('empty').textContent=''; renderChannelBanner();
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=25&playlistId=${uploadsPlaylist(id)}&key=${secrets.apiKey}`;
+    const d = await (await fetch(url)).json();
+    if (d.error) throw new Error(d.error.message);
+    const ids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
+    channelVideos = await fetchVideos(ids);
+    channelCache = { id, items: channelVideos };
+    addToPool(channelVideos); // save + auto-track
+    showFeed();
+  } catch (e) { flash(apiErr(e)); }
+}
+function renderChannelBanner() {
+  const b = $('channelBanner');
+  if (!channelView) { b.style.display='none'; b.innerHTML=''; return; }
+  const fol = isFollowed(channelView.id);
+  b.style.display = 'flex';
+  b.innerHTML = `<div class="chtitle">📺 ${escapeHtml(channelView.title||'Channel')}</div>
+    <div class="chactions">
+      <button class="chfollow">${fol?'👍 Following':'👍 Follow'}</button>
+      <button class="chhide">🚫 Hide channel</button>
+      <button class="chback">← Back to feed</button>
+    </div>`;
+  b.querySelector('.chfollow').onclick = () => { if (isFollowed(channelView.id)) unfollowChannel(channelView.id); else followChannel({ channelId:channelView.id, channel:channelView.title, id:(channelVideos[0]&&channelVideos[0].id) }); renderChannelBanner(); };
+  b.querySelector('.chhide').onclick = () => { const v = { channelId:channelView.id, channel:channelView.title }; exitChannel(); history.back(); hideChannel(v); };
+  b.querySelector('.chback').onclick = () => history.back();
+}
 
 // The ONLY thing that spends quota: fetch fresh videos into the pool.
 // order='date' (⟳) = newest uploads; default = more relevant results.
@@ -784,6 +836,7 @@ function visibleList(items, applyHideShorts=true) {
 
 function rerenderFilter() {
   if (currentTab !== 'search') return renderTab();
+  renderChannelBanner();
   const hideShorts = data.prefs.hideShorts;
   if (hideShorts) homeSub = 'videos';
   // sub-tab visibility: Shorts hidden entirely if pref set
@@ -801,19 +854,20 @@ function rerenderFilter() {
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
   renderCards(shown);
-  // Find-more button is always available on Home — it's the only quota spender.
-  const wrap = document.createElement('div');
-  wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:14px';
-  const b = document.createElement('button');
-  b.id = 'loadMore'; b.className = 'primary'; b.textContent = '🔍 Find more on YouTube';
-  b.onclick = findMore;
-  wrap.appendChild(b); $('grid').appendChild(wrap);
-
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'} in your feed`, true);
+  if (!channelView) { // Find-more (quota) only on the normal feed, not in a channel view
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:14px';
+    const b = document.createElement('button');
+    b.id = 'loadMore'; b.className = 'primary'; b.textContent = '🔍 Find more on YouTube';
+    b.onclick = findMore;
+    wrap.appendChild(b); $('grid').appendChild(wrap);
+  }
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}${channelView?' from this channel':' in your feed'}`, true);
   $('empty').textContent = shown.length ? '' :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
-     (activeFilters.length ? 'Nothing saved matches these filters — tap “🔍 Find more on YouTube”.' :
-      (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.')));
+     (channelView ? 'No videos found for this channel.' :
+      (activeFilters.length ? 'Nothing saved matches these filters — tap “🔍 Find more on YouTube”.' :
+       (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
 }
 
 function renderCards(list) {
@@ -834,7 +888,7 @@ function card(v) {
     </div>
     <div class="meta">
       <p class="title">${escapeHtml(v.title)}</p>
-      <div class="channel">${escapeHtml(v.channel)}</div>
+      <div class="channel">${v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel)}</div>
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
@@ -844,6 +898,8 @@ function card(v) {
     </div>`;
   el.querySelector('.thumb').onclick = () => play(v);
   el.querySelector('.title').onclick = () => play(v);
+  const cl = el.querySelector('.channel .chlink');
+  if (cl) cl.onclick = (e) => { e.stopPropagation(); e.preventDefault(); openChannel(v.channelId, v.channel); };
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
   const hd = el.querySelector('.hide');
@@ -1010,13 +1066,14 @@ function renderChannels() {
 }
 
 /* ============================== TABS ============================== */
-document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { setTab(t.dataset.tab); pushNav(); });
+document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { exitChannel(); setTab(t.dataset.tab); pushNav(); });
 $('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMore('date'); }; // ⟳ = newest uploads
 
 function setTab(name){
   currentTab = name;
   document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
   $('homeSubtabs').style.display = name==='search' ? 'flex' : 'none';
+  if (name !== 'search') { channelView = null; $('channelBanner').style.display='none'; }
   renderActiveFilters();
   renderRecentSearches();
   if (name==='search') { showFeed(); return; }   // free, local feed from the pool
@@ -1053,7 +1110,8 @@ function openPlayer(v, restore) {
   $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
-  $('pchannel').textContent = v.channel || '';
+  $('pchannel').innerHTML = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
+  const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
   $('pdesc').textContent = v.description || '';
   renderRelated(v);
   syncPlayerButtons();
@@ -1111,15 +1169,17 @@ function navSnapshot() {
     filters: activeFilters.slice(),
     video: ($('modal').classList.contains('open') && playing) ? stripVideo(playing) : null,
     panel: $('panel').classList.contains('open'),
+    channel: channelView ? { id:channelView.id, title:channelView.title } : null,
   };
 }
 function pushNav() { history.pushState(navSnapshot(), ''); }
 function applyNav(s) {
-  s = s || { tab:'search', sub:'videos', filters:[], video:null, panel:false };
+  s = s || { tab:'search', sub:'videos', filters:[], video:null, panel:false, channel:null };
   activeFilters = (s.filters || []).slice();
   homeSub = s.sub || 'videos';
   $('panel').classList.toggle('open', !!s.panel);
-  setTab(s.tab || 'search');                 // restores tab + results (no refetch if cached)
+  if (s.channel) { openChannel(s.channel.id, s.channel.title, true); }   // restore channel view (uses cache, no extra history)
+  else { exitChannel(); setTab(s.tab || 'search'); }
   if (s.video) openPlayer(s.video, true);    // restore player without re-counting budget
   else if ($('modal').classList.contains('open')) closePlayerUI();
 }
