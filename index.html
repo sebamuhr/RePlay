@@ -110,8 +110,20 @@
   .modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.94);
     align-items:center; justify-content:center; padding:16px; }
   .modal.open { display:flex; }
-  .player { width:100%; max-width:1000px; }
+  .modal { align-items:flex-start; }
+  .player { width:100%; max-width:1000px; max-height:94vh; overflow-y:auto; margin-top:2vh; }
   .player .frame { position:relative; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; }
+  .pchannel { color:var(--muted); font-size:13px; margin-top:10px; }
+  .pdesc { white-space:pre-wrap; word-break:break-word; color:#d6d6d6; font-size:13px; line-height:1.55; margin-top:10px; border-top:1px solid var(--line); padding-top:12px; }
+  .pdesc a { color:var(--blue); }
+  .related { margin-top:16px; }
+  .related h4 { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  .related-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  .rel-card { cursor:pointer; }
+  .rel-card img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; display:block; }
+  .rel-card .rt { font-size:12px; line-height:1.3; margin-top:5px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .statusbar { display:flex; gap:10px; align-items:center; }
+  .poolstat { font-size:12px; color:var(--muted); white-space:nowrap; }
   .player iframe { width:100%; height:100%; border:0; }
   .player .controls { display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
   .player .ptitle { font-size:15px; flex:1; min-width:200px; }
@@ -166,7 +178,10 @@
       <button class="tab" data-tab="favorites">Favorites</button>
       <button class="tab" id="refreshBtn" title="Refresh feed">⟳</button>
     </div>
-    <div class="budgets" id="budgets"></div>
+    <div class="statusbar">
+      <span id="poolStat" class="poolstat"></span>
+      <div class="budgets" id="budgets"></div>
+    </div>
   </div>
 
   <div class="subtabs" id="homeSubtabs">
@@ -254,6 +269,9 @@
         <button id="closeModal">Close ✕</button>
       </div>
     </div>
+    <div class="pchannel" id="pchannel"></div>
+    <div class="pdesc" id="pdesc"></div>
+    <div class="related" id="related"></div>
   </div>
 </div>
 
@@ -318,7 +336,7 @@ const POOL_MAX = 1000, TRACKED_MAX = 50;
 let pool = (data.pool && data.pool.length) ? data.pool : readJSON('replay.pool', []);
 let tracked = (data.tracked && data.tracked.length) ? data.tracked : readJSON('replay.tracked', []);
 data.pool = pool; data.tracked = tracked; // keep data and locals on the same arrays
-function savePool(){ data.pool = pool; saveData(); }
+function savePool(){ data.pool = pool; saveData(); renderPoolStat(); }
 function saveTracked(){ data.tracked = tracked; saveData(); }
 
 function saveData({ touch=true, sync=true } = {}) {
@@ -843,7 +861,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:(v.description||'').slice(0,200),tags:(v.tags||[]).slice(0,12),thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description||'',tags:v.tags||[],thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
@@ -1035,9 +1053,37 @@ function openPlayer(v, restore) {
   $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
+  $('pchannel').textContent = v.channel || '';
+  $('pdesc').textContent = v.description || '';
+  renderRelated(v);
   syncPlayerButtons();
   $('modal').classList.add('open');
+  const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (!restore) pushNav();  // opening a video is a back-able step
+}
+// Related videos pulled from your own pool (free, no API).
+function renderRelated(v) {
+  const box = $('related'); box.innerHTML = '';
+  const watched = new Set(data.history.map(h => h.id));
+  const vtags = new Set((v.tags||[]).map(t => t.toLowerCase()));
+  const vwords = new Set((v.title||'').toLowerCase().split(/\W+/).filter(w => w.length > 3));
+  const scored = pool.filter(x => x.id !== v.id && !isBlocked(x)).map(x => {
+    let s = 0;
+    if (x.channelId && x.channelId === v.channelId) s += 5;
+    (x.tags||[]).forEach(t => { if (vtags.has(t.toLowerCase())) s += 2; });
+    (x.title||'').toLowerCase().split(/\W+/).forEach(w => { if (w.length > 3 && vwords.has(w)) s += 1; });
+    if (!watched.has(x.id)) s += 0.5;
+    return { x, s };
+  }).filter(o => o.s > 0).sort((a,b) => b.s - a.s).slice(0, 8);
+  if (!scored.length) return;
+  box.innerHTML = '<h4>Related from your feed</h4><div class="related-grid"></div>';
+  const grid = box.querySelector('.related-grid');
+  scored.forEach(({ x }) => {
+    const c = document.createElement('div'); c.className = 'rel-card';
+    c.innerHTML = `<img loading="lazy" src="${x.thumb}" alt=""><div class="rt">${escapeHtml(x.title)}</div>`;
+    c.onclick = () => play(x);
+    grid.appendChild(c);
+  });
 }
 function syncPlayerButtons() {
   if (!playing) return;
@@ -1176,6 +1222,7 @@ async function pushSync() {
 // Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
 function softRefresh() {
   pool = data.pool || []; tracked = data.tracked || []; // re-link after a merge
+  renderPoolStat();
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   renderActiveFilters(); renderRecentSearches();
@@ -1201,7 +1248,9 @@ async function connectGh() {
 }
 $('connectGh').onclick = connectGh;
 $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); pushSync().catch(e=>toast('Sync error: '+e.message)); };
-function setSyncState(text, err=false){ const el=$('syncState'); el.textContent=text; el.className = err?'syncerr':'synced'; }
+let syncLabel = '';
+function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
+function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''}`; }
 
 /* ============================== EXPORT / IMPORT ============================== */
 $('exportBtn').onclick = () => {
@@ -1225,7 +1274,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderPoolStat(); renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 $('led').onclick = fetchChannelNew;
 $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
 $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
