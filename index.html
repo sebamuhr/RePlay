@@ -252,7 +252,7 @@
     <h3>Sync across devices (GitHub) <span id="syncState"></span></h3>
     <p>Optional. Your history/favorites/watch-later/blocklist sync via a private GitHub Gist. Create a token (scope: <b>gist</b> only) at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Stored only on this device.</p>
     <div class="row"><span class="lbl">GitHub token</span><input id="ghToken" type="text" class="secret" placeholder="ghp_…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>
-    <div class="row"><span class="lbl">Gist ID</span><input id="gistId" type="text" placeholder="leave empty to auto-create"><button id="connectGh">Connect</button><button id="syncNow">Sync now</button></div>
+    <div class="row"><span class="lbl">Gist ID</span><input id="gistId" type="text" placeholder="leave empty to auto-find / create"><button id="connectGh">Connect</button><button id="syncNow">Sync now</button></div>
     <div class="row"><button id="forcePushBtn">⬆ Upload this device → Gist (overwrite)</button></div>
     <p style="font-size:12px;color:var(--muted)">Recovery: if a device shows blank, run this on the device that HAS your data to restore the Gist, then “Sync now” on the others.</p>
 
@@ -1411,19 +1411,40 @@ function softRefresh() {
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
+// Find the user's existing RePlay Gist (largest data file wins, ignoring empty dupes).
+async function findExistingGist() {
+  let best = null, bestSize = -1;
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetch(`https://api.github.com/gists?per_page=100&page=${page}`, { headers: ghHeaders() });
+    if (!res.ok) throw new Error('Could not list your Gists ('+res.status+')'+ghHint(res.status));
+    const list = await res.json();
+    if (!list.length) break;
+    for (const g of list) {
+      const f = g.files && g.files[GIST_FILE];
+      if (f || g.description === 'RePlay data') { const size = f ? (f.size||0) : 0; if (size > bestSize) { bestSize = size; best = g.id; } }
+    }
+    if (list.length < 100) break;
+  }
+  return best;
+}
 async function connectGh() {
   secrets.ghToken = $('ghToken').value.trim();
   secrets.gistId = $('gistId').value.trim();
   if (!secrets.ghToken) { toast('Paste a GitHub token first.'); return; }
   try {
     if (!secrets.gistId) {
-      setSyncState('creating gist…');
-      const res = await fetch('https://api.github.com/gists', { method:'POST', headers:{...ghHeaders(),'Content-Type':'application/json'},
-        body: JSON.stringify({ description:'RePlay data', public:false, files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
-      if (!res.ok) throw new Error('Create failed ('+res.status+')'+ghHint(res.status));
-      const gist = await res.json();
-      secrets.gistId = gist.id; $('gistId').value = gist.id;
-      toast('Created a NEW empty Gist. Its ID is in the field — use that SAME ID on your other devices.');
+      setSyncState('finding your Gist…');
+      let id = await findExistingGist();         // reuse your existing RePlay Gist if there is one
+      if (!id) {
+        const res = await fetch('https://api.github.com/gists', { method:'POST', headers:{...ghHeaders(),'Content-Type':'application/json'},
+          body: JSON.stringify({ description:'RePlay data', public:false, files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
+        if (!res.ok) throw new Error('Create failed ('+res.status+')'+ghHint(res.status));
+        id = (await res.json()).id;
+        toast('No existing RePlay Gist found — created a new one.');
+      } else {
+        toast('Found your existing RePlay Gist ✓');
+      }
+      secrets.gistId = id; $('gistId').value = id;
     }
     saveSecrets();
     await pushSync();
