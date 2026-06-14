@@ -119,13 +119,18 @@
   .modal { align-items:flex-start; }
   .player { width:100%; max-width:1000px; max-height:94vh; overflow-y:auto; margin-top:2vh; }
   .player .frame { position:relative; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; }
-  /* Shorts: portrait, full-height player */
-  .modal.shorts .player { max-width:600px; }
-  .modal.shorts .frame { aspect-ratio:9/16; height:82vh; width:auto; max-width:100%; margin:0 auto; }
-  .shortnav { display:none; position:absolute; right:10px; z-index:3; width:44px; height:44px; border-radius:50%;
-    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.25); font-size:16px; cursor:pointer; }
-  .shortnav.up { top:10px; } .shortnav.down { bottom:10px; }
-  .modal.shorts .shortnav { display:block; }
+  /* Shorts: fullscreen, swipe-to-navigate, controls hidden behind "More" */
+  #shortSwipe { display:none; }
+  #shortMore { display:none; }
+  .modal.shorts { padding:0; align-items:stretch; }
+  .modal.shorts .player { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; overflow:hidden; position:relative; }
+  .modal.shorts .frame { width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
+  .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
+  .modal.shorts #shortMore { display:block; position:absolute; top:14px; left:14px; z-index:6;
+    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; }
+  .modal.shorts #playerMeta { display:none; }
+  .modal.shorts.sheet-open #playerMeta { display:block; position:fixed; left:0; right:0; bottom:0; z-index:8;
+    max-height:72vh; overflow-y:auto; background:rgba(0,0,0,.95); border-top:1px solid var(--line); padding:14px 16px 28px; }
   .pchannel { color:var(--muted); font-size:13px; margin-top:10px; }
   .pdesc { white-space:pre-wrap; word-break:break-word; color:#d6d6d6; font-size:13px; line-height:1.55; margin-top:10px; border-top:1px solid var(--line); padding-top:12px; }
   .pdesc a { color:var(--blue); }
@@ -288,27 +293,28 @@
   <div class="player">
     <div class="frame" id="frame">
       <iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
-      <button class="shortnav up" id="shortPrev" type="button" title="Previous short">▲</button>
-      <button class="shortnav down" id="shortNext" type="button" title="Next short">▼</button>
+      <div id="shortSwipe"></div>
+      <button id="shortMore" type="button">More ▾</button>
     </div>
-    <div class="controls">
-      <div class="ptitle" id="ptitle"></div>
-      <div class="actions">
-        <button id="pLater">＋ Watch Later</button>
-        <button id="pFav">★ Favorite</button>
-        <button id="pFollow">👍 Follow channel</button>
-        <button id="pHideCh">🚫 Hide channel</button>
-        <button id="pHideVid">🚫 Not interested</button>
-        <a id="pOpen" href="#" target="_blank" rel="noopener"><button type="button">Open on YouTube ↗</button></a>
-        <button id="closeModal">Close ✕</button>
+    <div id="playerMeta">
+      <div class="controls">
+        <div class="ptitle" id="ptitle"></div>
+        <div class="actions">
+          <button id="pLater">＋ Watch Later</button>
+          <button id="pFav">★ Favorite</button>
+          <button id="pFollow">👍 Follow channel</button>
+          <button id="pHideCh">🚫 Hide channel</button>
+          <button id="pHideVid">🚫 Not interested</button>
+          <a id="pOpen" href="#" target="_blank" rel="noopener"><button type="button">Open on YouTube ↗</button></a>
+          <button id="closeModal">Close ✕</button>
+        </div>
       </div>
-    </div>
-    <button class="desc-toggle" id="detailsToggle" type="button" style="display:none">▾ Show details</button>
-    <div id="playerDetails">
-      <div class="pchannel" id="pchannel"></div>
-      <div class="pdesc collapsed" id="pdesc"></div>
-      <button class="desc-toggle" id="descToggle" type="button">Show more</button>
-      <div class="related" id="related"></div>
+      <div id="playerDetails">
+        <div class="pchannel" id="pchannel"></div>
+        <div class="pdesc collapsed" id="pdesc"></div>
+        <button class="desc-toggle" id="descToggle" type="button">Show more</button>
+        <div class="related" id="related"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1241,7 +1247,8 @@ function openPlayer(v, restore, replace) {
   const old = $('iframe'); if (old) old.remove();
   const ifr = document.createElement('iframe');
   ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
-  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
+  const loop = v.isShort ? `&loop=1&playlist=${v.id}` : '';
+  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${loop}${origin}`;
   frame.insertBefore(ifr, frame.firstChild);
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
@@ -1256,10 +1263,10 @@ function openPlayer(v, restore, replace) {
   requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
   renderRelated(v);
   syncPlayerButtons();
-  // Shorts: portrait player; hide channel/description/related until "Show details" is tapped.
+  // Shorts: fullscreen; all controls/text hidden behind "More" (tap video or More to reveal).
   $('modal').classList.toggle('shorts', !!v.isShort);
-  if (v.isShort) { $('playerDetails').style.display = 'none'; $('detailsToggle').style.display = ''; $('detailsToggle').textContent = '▾ Show details'; }
-  else { $('playerDetails').style.display = ''; $('detailsToggle').style.display = 'none'; }
+  $('modal').classList.remove('sheet-open');
+  $('playerDetails').style.display = '';
   $('modal').classList.add('open');
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (replace) history.replaceState(navSnapshot(), '');
@@ -1312,10 +1319,10 @@ $('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isF
 $('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
 $('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
 $('descToggle').onclick = () => { const collapsed = $('pdesc').classList.toggle('collapsed'); $('descToggle').textContent = collapsed ? 'Show more' : 'Show less'; };
-$('detailsToggle').onclick = () => { const d = $('playerDetails'); const show = d.style.display === 'none'; d.style.display = show ? '' : 'none'; $('detailsToggle').textContent = show ? '▴ Hide details' : '▾ Show details'; };
-function closePlayerUI(){ $('modal').classList.remove('open'); $('modal').classList.remove('shorts'); const f=$('frame'); const i=$('iframe'); if(i) i.remove(); }
+function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-open'); const i=$('iframe'); if(i) i.remove(); }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
+$('shortMore').onclick = (e) => { e.stopPropagation(); $('modal').classList.toggle('sheet-open'); };
 document.addEventListener('keydown', e => {
   if (!$('modal').classList.contains('open')) return;
   if (e.key==='Escape') { history.back(); return; }
@@ -1324,22 +1331,21 @@ document.addEventListener('keydown', e => {
     else if (e.key==='ArrowUp') { e.preventDefault(); shortStep(-1); }
   }
 });
-// Shorts swipe / scroll navigation (next = up-swipe / scroll down)
-$('shortNext').onclick = () => shortStep(1);
-$('shortPrev').onclick = () => shortStep(-1);
+// Shorts: swipe / scroll over the video → next/prev (next = swipe up / scroll down). Tap = toggle "More".
 let shortWheelLock = false;
-$('modal').addEventListener('wheel', e => {
-  if (!$('modal').classList.contains('shorts')) return;
+$('shortSwipe').addEventListener('wheel', e => {
   e.preventDefault();
   if (shortWheelLock) return; shortWheelLock = true; setTimeout(() => shortWheelLock = false, 500);
   shortStep(e.deltaY > 0 ? 1 : -1);
 }, { passive:false });
-let touchStartY = null;
-$('modal').addEventListener('touchstart', e => { if ($('modal').classList.contains('shorts')) touchStartY = e.touches[0].clientY; }, { passive:true });
-$('modal').addEventListener('touchend', e => {
-  if (touchStartY == null || !$('modal').classList.contains('shorts')) return;
-  const dy = e.changedTouches[0].clientY - touchStartY; touchStartY = null;
-  if (Math.abs(dy) > 60) shortStep(dy < 0 ? 1 : -1);  // swipe up → next
+let touchStartY = null, touchStartX = null;
+$('shortSwipe').addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchStartX = e.touches[0].clientX; }, { passive:true });
+$('shortSwipe').addEventListener('touchend', e => {
+  if (touchStartY == null) return;
+  const dy = e.changedTouches[0].clientY - touchStartY, dx = e.changedTouches[0].clientX - touchStartX;
+  touchStartY = touchStartX = null;
+  if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx)) shortStep(dy < 0 ? 1 : -1); // vertical swipe
+  else if (Math.abs(dy) < 12 && Math.abs(dx) < 12) $('modal').classList.toggle('sheet-open'); // tap → show/hide controls
 });
 $('closePanel').onclick = () => history.back();
 
