@@ -113,28 +113,50 @@
     border:1px solid #3a2f12; color:var(--warn); padding:12px 18px; border-radius:12px; font-size:14px;
     z-index:60; display:none; max-width:90%; text-align:center; }
   .toast.show { display:block; }
+
+  /* topics */
+  .topic { background:#0d1a12; border:1px solid #1f3a26; color:#9ae6b4; padding:5px 10px; border-radius:999px; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
+  .topic .x { cursor:pointer; }
+  .suggest { background:var(--card); border:1px dashed #333; color:var(--muted); padding:5px 10px; border-radius:999px; font-size:13px; cursor:pointer; }
+  .suggest:hover { color:var(--fg); border-color:#555; }
+  .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
+
+  /* shorts feed */
+  .shortsfeed { display:none; height:calc(100vh - 180px); min-height:420px; overflow-y:auto; scroll-snap-type:y mandatory; border:1px solid var(--line); border-radius:12px; background:#000; }
+  .short { height:100%; scroll-snap-align:start; position:relative; display:flex; align-items:center; justify-content:center; }
+  .short-inner { position:relative; height:100%; aspect-ratio:9/16; max-width:100%; background:#000; }
+  .short-inner img.short-thumb { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .short-inner iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .short-meta { position:absolute; left:0; right:0; bottom:0; padding:14px; background:linear-gradient(transparent,rgba(0,0,0,.85)); pointer-events:none; }
+  .short-title { font-size:14px; line-height:1.3; margin-bottom:4px; }
+  .short-ch { font-size:12px; color:#cfcfcf; }
+  .short-lock { display:none; position:absolute; inset:0; background:rgba(0,0,0,.93); color:var(--warn); text-align:center; align-items:center; justify-content:center; font-size:16px; line-height:1.6; padding:20px; }
+  .short.locked .short-lock { display:flex; }
+  .short.locked iframe { display:none; }
 </style>
 </head>
 <body>
 <header>
   <div class="bar">
     <div class="logo">Re<span>Play</span></div>
-    <input id="q" type="search" placeholder="Search a topic…" />
-    <button class="primary" id="searchBtn">Search</button>
+    <input id="q" type="search" placeholder="Add a filter and press Enter…" />
+    <button class="primary" id="searchBtn">Add</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
   </div>
 
   <div class="subbar">
     <div class="tabs">
-      <button class="tab active" data-tab="search">Search</button>
+      <button class="tab active" data-tab="search">Home</button>
+      <button class="tab" data-tab="shorts">Shorts</button>
       <button class="tab" data-tab="history">History</button>
       <button class="tab" data-tab="later">Watch Later</button>
       <button class="tab" data-tab="favorites">Favorites</button>
+      <button class="tab" id="refreshBtn" title="Refresh feed">⟳</button>
     </div>
     <div class="budgets" id="budgets"></div>
   </div>
 
-  <div class="chips" id="savedSearches"></div>
+  <div class="chips" id="activeFilters"></div>
 
   <!-- SETTINGS PANEL -->
   <div class="panel" id="panel">
@@ -143,9 +165,16 @@
     <div class="row"><input id="apiKey" type="password" placeholder="Paste YouTube API key" autocomplete="off"><button id="saveKey">Save</button></div>
 
     <hr class="hr">
+    <h3>Topics <span style="color:var(--muted);font-weight:400">— fill your Home &amp; Shorts feeds (no algorithm)</span></h3>
+    <p>Pick topics you like. Your Home and Shorts tabs fill only with these.</p>
+    <div class="blocklist" id="topicList"></div>
+    <div class="row" style="margin-top:8px"><input id="newTopic" type="text" placeholder="Add a custom topic"><button id="addTopic">Add</button></div>
+    <div class="blocklist" id="topicPicker" style="margin-top:8px"></div>
+
+    <hr class="hr">
     <h3>Shorts</h3>
     <p>Anything under 60 seconds is a Short.</p>
-    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts completely</label>
+    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts from Home feed</label>
 
     <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
     <div id="budgetPrefs"></div>
@@ -170,8 +199,10 @@
 </header>
 
 <main>
+  <div class="chips" id="recentSearches" style="display:none"></div>
   <div class="status" id="status"></div>
   <div class="grid" id="grid"></div>
+  <div class="shortsfeed" id="shortsFeed"></div>
   <div class="empty" id="empty"></div>
 </main>
 
@@ -208,6 +239,7 @@ function defaultData() {
     favorites: [],
     prefs: {
       hideShorts: false,
+      topics: [],
       budgets: {
         shorts: { enabled:false, limit:3, windowMin:60 },
         videos: { enabled:false, limit:5, windowMin:60 },
@@ -300,7 +332,14 @@ function renderBudgets() {
   });
 }
 // tick to update countdowns / auto-unlock
-setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }, 1000);
+setInterval(() => {
+  if (document.visibilityState!=='visible') return;
+  renderBudgets();
+  if (currentTab==='shorts' && activeShortEl && activeShortEl.classList.contains('locked')) {
+    if (budgetLocked('shorts')) activeShortEl.querySelector('.cd').textContent = 'Back in ' + fmtCountdown(budgetUnlockMs('shorts'));
+    else activateShort(activeShortEl);
+  }
+}, 1000);
 
 /* ============================== SETTINGS UI ============================== */
 $('gearBtn').onclick = () => $('panel').classList.toggle('open');
@@ -357,55 +396,151 @@ function addBlock(word) {
 $('addBlock').onclick = () => { addBlock($('newBlock').value); $('newBlock').value=''; };
 $('newBlock').addEventListener('keydown', e => { if (e.key==='Enter') $('addBlock').click(); });
 
-/* ============================== SAVED SEARCHES ============================== */
-function renderSearches() {
-  const wrap = $('savedSearches'); wrap.innerHTML = '';
+/* ============================== TOPICS ============================== */
+const PREDEFINED_TOPICS = ['Music','Live music','Cooking','Baking','Science','Space','Astronomy','History','Technology','Programming','AI','Travel','Nature','Wildlife','Fitness','Yoga','Gaming','Art','Drawing','Photography','DIY','Woodworking','Cars','Motorsport','Finance','Investing','Languages','Philosophy','Psychology','Documentaries','Comedy','Stand-up','Podcasts','News','Chess','Gardening','Meditation','Books','Movies','Animation','Electronics','3D printing','Hiking','Fishing','Architecture','Design'];
+
+function renderTopics() {
+  const chosen = data.prefs.topics || [];
+  const list = $('topicList'); list.innerHTML = '';
+  if (!chosen.length) list.innerHTML = '<span style="color:var(--muted);font-size:13px">No topics yet — pick some below.</span>';
+  chosen.forEach(t => {
+    const el = document.createElement('span'); el.className = 'topic';
+    el.innerHTML = `${escapeHtml(t)} <span class="x">✕</span>`;
+    el.querySelector('.x').onclick = () => removeTopic(t);
+    list.appendChild(el);
+  });
+  const picker = $('topicPicker'); picker.innerHTML = '';
+  PREDEFINED_TOPICS.filter(t => !chosen.some(c => c.toLowerCase()===t.toLowerCase())).forEach(t => {
+    const el = document.createElement('span'); el.className = 'suggest'; el.textContent = '+ ' + t;
+    el.onclick = () => addTopic(t);
+    picker.appendChild(el);
+  });
+}
+function addTopic(t) {
+  t = (t||'').trim(); if (!t) return;
+  const list = data.prefs.topics || (data.prefs.topics = []);
+  if (list.some(x => x.toLowerCase()===t.toLowerCase())) return;
+  list.push(t); touchPrefs(); invalidateFeeds(); renderTopics();
+}
+function removeTopic(t) {
+  data.prefs.topics = (data.prefs.topics||[]).filter(x => x !== t);
+  touchPrefs(); invalidateFeeds(); renderTopics();
+}
+function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); }
+$('addTopic').onclick = () => { addTopic($('newTopic').value); $('newTopic').value=''; };
+$('newTopic').addEventListener('keydown', e => { if (e.key==='Enter') $('addTopic').click(); });
+
+/* ============================== RECENT SEARCHES (History tab) ============================== */
+function renderRecentSearches() {
+  const wrap = $('recentSearches'); wrap.innerHTML = '';
+  if (currentTab !== 'history' || !data.savedSearches.length) { wrap.style.display='none'; return; }
+  wrap.style.display = 'flex';
   data.savedSearches.forEach(s => {
-    const el = document.createElement('span');
-    el.className = 'chip';
-    el.innerHTML = `<span class="t">${escapeHtml(s)}</span> <span class="x">✕</span>`;
-    el.querySelector('.t').onclick = () => { $('q').value=s; doSearch(s); };
-    el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.deleted.searches[s]=Date.now(); saveData(); renderSearches(); };
+    const el = document.createElement('span'); el.className = 'chip';
+    el.innerHTML = `<span class="t">🔎 ${escapeHtml(s)}</span> <span class="x">✕</span>`;
+    el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); setTab('search'); };
+    el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.deleted.searches[s]=Date.now(); saveData(); renderRecentSearches(); };
     wrap.appendChild(el);
   });
 }
 function rememberSearch(q) {
-  data.savedSearches = [q, ...data.savedSearches.filter(x=>x!==q)].slice(0,12);
-  delete data.deleted.searches[q];  // searching again un-deletes it
-  saveData(); renderSearches();
+  if (!q) return;
+  data.savedSearches = [q, ...data.savedSearches.filter(x=>x!==q)].slice(0,20);
+  delete data.deleted.searches[q];
+  saveData();
 }
 
-/* ============================== SEARCH ============================== */
-$('searchBtn').onclick = () => doSearch($('q').value.trim());
-$('q').addEventListener('keydown', e => { if (e.key==='Enter') doSearch($('q').value.trim()); });
-
+/* ============================== SEARCH = FILTER BUILDER ============================== */
+let activeFilters = [];
 let lastResults = [];
 let currentTab = 'search';
 
-async function doSearch(q) {
-  if (!q) return;
-  setTab('search');
-  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
-  flash('Searching…'); $('grid').innerHTML=''; $('empty').textContent='';
-  try {
-    const sUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`;
-    const sData = await (await fetch(sUrl)).json();
-    if (sData.error) throw new Error(sData.error.message || 'API error');
-    const ids = (sData.items||[]).map(i=>i.id.videoId).filter(Boolean);
-    if (!ids.length) { flash('No results.'); return; }
+function renderActiveFilters() {
+  const wrap = $('activeFilters'); wrap.innerHTML = '';
+  if (currentTab !== 'search') { wrap.style.display='none'; return; }
+  wrap.style.display = 'flex';
+  activeFilters.forEach(t => {
+    const el = document.createElement('span'); el.className = 'chip filter';
+    el.innerHTML = `${escapeHtml(t)} <span class="x">✕</span>`;
+    el.querySelector('.x').onclick = () => removeFilter(t);
+    wrap.appendChild(el);
+  });
+  if (activeFilters.length) {
+    const clr = document.createElement('span'); clr.className = 'chip'; clr.textContent = 'Clear all ✕';
+    clr.onclick = () => { activeFilters = []; renderActiveFilters(); loadHome(); };
+    wrap.appendChild(clr);
+  }
+}
+function addFilter(t) {
+  t = (t||'').trim(); if (!t) return;
+  if (currentTab !== 'search') setTab('search');
+  if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
+  renderActiveFilters(); runFilterSearch();
+}
+function removeFilter(t) {
+  activeFilters = activeFilters.filter(x => x !== t);
+  renderActiveFilters();
+  if (activeFilters.length) runFilterSearch(); else loadHome();
+}
+$('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; };
+$('q').addEventListener('keydown', e => { if (e.key==='Enter') { addFilter($('q').value); $('q').value=''; } });
 
-    const vUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${ids.join(',')}&key=${secrets.apiKey}`;
-    const vData = await (await fetch(vUrl)).json();
-    lastResults = (vData.items||[]).map(v => {
+/* ============================== API FETCH HELPERS ============================== */
+function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+async function searchIds(query, max) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=${max}&q=${encodeURIComponent(query)}&key=${secrets.apiKey}`;
+  const d = await (await fetch(url)).json();
+  if (d.error) throw new Error(d.error.message || 'API error');
+  return (d.items||[]).map(i => i.id.videoId).filter(Boolean);
+}
+async function fetchVideos(ids) {
+  const out = [];
+  for (let i=0; i<ids.length; i+=50) {
+    const batch = ids.slice(i, i+50);
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${batch.join(',')}&key=${secrets.apiKey}`;
+    const d = await (await fetch(url)).json();
+    if (d.error) throw new Error(d.error.message || 'API error');
+    (d.items||[]).forEach(v => {
       const dur = parseISODuration(v.contentDetails.duration);
-      return {
-        id: v.id, title: v.snippet.title, channel: v.snippet.channelTitle,
-        description: v.snippet.description||'', tags: v.snippet.tags||[],
-        thumb: (v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
-        duration: dur, isShort: dur>0 && dur<60,
-      };
+      out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle,
+        description:v.snippet.description||'', tags:v.snippet.tags||[],
+        thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
+        duration:dur, isShort: dur>0 && dur<60 });
     });
-    rememberSearch(q);
+  }
+  return out;
+}
+
+async function runFilterSearch() {
+  if (!activeFilters.length) return loadHome();
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
+  const query = activeFilters.join(' ');
+  flash('Filtering…'); $('grid').innerHTML=''; $('empty').textContent='';
+  try {
+    const ids = await searchIds(query, 25);
+    if (!ids.length) { lastResults=[]; flash(''); $('empty').textContent='No videos match those filters.'; return; }
+    lastResults = await fetchVideos(ids);
+    rememberSearch(query);
+    rerenderFilter();
+  } catch (err) { flash('Error: ' + err.message); }
+}
+
+async function loadHome(force=false) {
+  if (currentTab !== 'search') return;
+  const topics = data.prefs.topics || [];
+  if (!topics.length) { lastResults=[]; $('grid').innerHTML=''; flash(''); $('empty').textContent='Add topics in ⚙ Preferences to fill your Home feed — or type a filter above.'; return; }
+  if (!secrets.apiKey) { $('panel').classList.add('open'); flash(''); $('empty').textContent='Add your YouTube API key in ⚙ to load your feed.'; return; }
+  const key = topics.slice().sort().join('|');
+  const cache = readJSON('replay.home', null);
+  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) { lastResults = cache.items; rerenderFilter(); return; }
+  flash('Loading your topics…'); $('grid').innerHTML=''; $('empty').textContent='';
+  try {
+    let ids = [];
+    for (const t of topics) ids.push(...await searchIds(t, 10));
+    ids = Array.from(new Set(ids));
+    const items = shuffle(await fetchVideos(ids));
+    lastResults = items;
+    writeJSON('replay.home', { ts:Date.now(), key, items });
     rerenderFilter();
   } catch (err) { flash('Error: ' + err.message); }
 }
@@ -417,8 +552,8 @@ function isBlocked(v) {
 }
 
 /* ============================== RENDER LIST ============================== */
-function visibleList(items) {
-  return items.filter(v => !isBlocked(v) && !(data.prefs.hideShorts && v.isShort));
+function visibleList(items, applyHideShorts=true) {
+  return items.filter(v => !isBlocked(v) && !(applyHideShorts && data.prefs.hideShorts && v.isShort));
 }
 
 function rerenderFilter() {
@@ -494,16 +629,99 @@ function addHistory(v) {
 }
 
 /* ============================== TABS ============================== */
-document.querySelectorAll('.tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
-function setTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name)); renderTab(); }
+document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => setTab(t.dataset.tab));
+$('refreshBtn').onclick = () => { if (currentTab==='shorts') loadShorts(true); else { activeFilters=[]; renderActiveFilters(); loadHome(true); } };
+
+function setTab(name){
+  currentTab = name;
+  document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
+  const isShorts = name==='shorts';
+  $('shortsFeed').style.display = isShorts ? 'block' : 'none';
+  $('grid').style.display = isShorts ? 'none' : 'grid';
+  renderActiveFilters();
+  renderRecentSearches();
+  if (isShorts) { flash(''); $('empty').textContent=''; loadShorts(); return; }
+  if (name==='search') { if (activeFilters.length) runFilterSearch(); else loadHome(); return; }
+  renderTab();
+}
 function renderTab() {
   if (currentTab==='search') { rerenderFilter(); return; }
+  if (currentTab==='shorts') { loadShorts(); return; }
   const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
   const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
-  const shown = visibleList(map[currentTab]);
+  const shown = visibleList(map[currentTab], false);
   renderCards(shown);
-  flash(`<b>${shown.length}</b> in ${titles[currentTab]}`, true);
+  const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
+  flash(`<b>${shown.length}</b> in ${titles[currentTab]}${extra}`, true);
   $('empty').textContent = shown.length ? '' : `Nothing in ${titles[currentTab]} yet.`;
+}
+
+/* ============================== SHORTS FEED ============================== */
+let shortsObserver = null, activeShortEl = null;
+const countedShorts = new Set();
+
+async function loadShorts(force=false) {
+  const feed = $('shortsFeed');
+  const topics = data.prefs.topics || [];
+  if (!topics.length) { feed.innerHTML = '<div class="empty">Add topics in ⚙ Preferences to fill your Shorts feed.</div>'; return; }
+  if (!secrets.apiKey) { $('panel').classList.add('open'); feed.innerHTML = '<div class="empty">Add your YouTube API key in ⚙ to load Shorts.</div>'; return; }
+  const key = topics.slice().sort().join('|');
+  const cache = readJSON('replay.shorts', null);
+  let items;
+  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) {
+    items = cache.items;
+  } else {
+    feed.innerHTML = '<div class="empty">Loading Shorts…</div>';
+    try {
+      let ids = [];
+      for (const t of topics) ids.push(...await searchIds(t + ' #shorts', 12));
+      ids = Array.from(new Set(ids));
+      items = (await fetchVideos(ids)).filter(v => v.isShort);
+      shuffle(items);
+      writeJSON('replay.shorts', { ts:Date.now(), key, items });
+    } catch (err) { feed.innerHTML = '<div class="empty">Error: ' + escapeHtml(err.message) + '</div>'; return; }
+  }
+  renderShortsFeed(items.filter(v => !isBlocked(v)));
+}
+
+function renderShortsFeed(items) {
+  const feed = $('shortsFeed'); feed.innerHTML = '';
+  countedShorts.clear(); activeShortEl = null;
+  if (!items.length) { feed.innerHTML = '<div class="empty">No Shorts found for your topics. Add more topics, or tap ⟳ to refresh.</div>'; return; }
+  items.forEach(v => {
+    const s = document.createElement('div'); s.className = 'short'; s._video = v;
+    s.innerHTML = `
+      <div class="short-inner">
+        <img class="short-thumb" src="${v.thumb}" alt="">
+        <iframe allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
+        <div class="short-lock"><div>🌙 Shorts limit reached<br><span class="cd"></span></div></div>
+        <div class="short-meta"><div class="short-title">${escapeHtml(v.title)}</div><div class="short-ch">${escapeHtml(v.channel)}</div></div>
+      </div>`;
+    feed.appendChild(s);
+  });
+  if (shortsObserver) shortsObserver.disconnect();
+  shortsObserver = new IntersectionObserver(onShortIntersect, { root: feed, threshold: 0.6 });
+  feed.querySelectorAll('.short').forEach(el => shortsObserver.observe(el));
+}
+
+function onShortIntersect(entries) {
+  entries.forEach(e => {
+    const el = e.target;
+    if (e.isIntersecting) { activeShortEl = el; activateShort(el); }
+    else { const f = el.querySelector('iframe'); if (f) f.src=''; const th = el.querySelector('.short-thumb'); if (th) th.style.display=''; }
+  });
+}
+function activateShort(el) {
+  const v = el._video;
+  if (budgetLocked('shorts')) {
+    el.classList.add('locked');
+    el.querySelector('.cd').textContent = 'Back in ' + fmtCountdown(budgetUnlockMs('shorts'));
+    return;
+  }
+  el.classList.remove('locked');
+  if (!countedShorts.has(v.id)) { countedShorts.add(v.id); budgetRecord('shorts'); addHistory(v); renderBudgets(); }
+  const f = el.querySelector('iframe');
+  if (f && !f.src) { f.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1&playsinline=1`; el.querySelector('.short-thumb').style.display='none'; }
 }
 
 /* ============================== PLAYER + BUDGET GATE ============================== */
@@ -652,7 +870,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderBlocks(); renderSearches(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; renderTab(); }
+function refreshAll(){ renderBlocks(); renderTopics(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 
 (async function init(){
   refreshAll();
