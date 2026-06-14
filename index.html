@@ -130,6 +130,12 @@
   .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
   .modal.shorts #shortMore { display:block; position:absolute; top:14px; left:14px; z-index:6;
     background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; }
+  #shortClose { display:none; }
+  .modal.shorts #shortClose { display:block; position:absolute; top:14px; right:14px; z-index:6; width:38px; height:38px; border-radius:50%;
+    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); font-size:16px; cursor:pointer; }
+  .navbtn { color:var(--accent); border-color:#3a1d1d; font-weight:700; padding:10px 12px; }
+  @keyframes shortIn { from { transform:translateY(40px); opacity:.15; } to { transform:none; opacity:1; } }
+  .modal.shorts .frame.anim { animation: shortIn .28s ease; }
   .modal.shorts #playerMeta { display:none; }
   .modal.shorts.sheet-open #playerMeta { display:block; position:fixed; left:0; right:0; bottom:0; z-index:8;
     max-height:72vh; overflow-y:auto; background:rgba(0,0,0,.95); border-top:1px solid var(--line); padding:14px 16px 28px; }
@@ -188,6 +194,8 @@
 <body>
 <header>
   <div class="bar">
+    <button class="icon-btn navbtn" id="navBack" title="Back">◀</button>
+    <button class="icon-btn navbtn" id="navFwd" title="Forward">▶</button>
     <div class="logo">Re<span>Play</span></div>
     <div class="qwrap">
       <input id="q" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
@@ -297,6 +305,7 @@
       <iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
       <div id="shortSwipe"></div>
       <button id="shortMore" type="button">More ▾</button>
+      <button id="shortClose" type="button" title="Close">✕</button>
     </div>
     <div id="playerMeta">
       <div class="controls">
@@ -1232,6 +1241,19 @@ function play(v) {
   if (v.isShort) buildShortsQueue(v);   // user click on a short → set up the swipe queue
   openPlayer(v, false);
 }
+let shortPaused = false;
+function ytCmd(func){ const f = $('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
+function toggleShortPause(){ if (shortPaused) { ytCmd('playVideo'); shortPaused = false; } else { ytCmd('pauseVideo'); shortPaused = true; } }
+function prefetchShorts(){ // best-effort preload of the next/prev short
+  document.querySelectorAll('link.short-prefetch').forEach(l => l.remove());
+  const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
+  [shortsIndex+1, shortsIndex-1].forEach(i => {
+    const v = shortsQueue[i]; if (!v) return;
+    const l = document.createElement('link'); l.className = 'short-prefetch'; l.rel = 'prefetch'; l.as = 'document';
+    l.href = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=0${origin}`;
+    document.head.appendChild(l);
+  });
+}
 function buildShortsQueue(v) {
   let src = currentTab === 'search' ? lastResults
     : ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
@@ -1262,7 +1284,7 @@ function openPlayer(v, restore, replace) {
   ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
   ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s';
   ifr.onload = () => { ifr.style.opacity = '1'; };
-  const sParams = v.isShort ? `&loop=1&playlist=${v.id}&controls=0` : ''; // shorts loop + hide YT controls
+  const sParams = v.isShort ? `&loop=1&playlist=${v.id}&controls=0&enablejsapi=1` : ''; // shorts: loop, no YT controls, JS API for tap-pause
   ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${sParams}${origin}`;
   frame.insertBefore(ifr, frame.firstChild);
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
@@ -1278,11 +1300,12 @@ function openPlayer(v, restore, replace) {
   requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
   renderRelated(v);
   syncPlayerButtons();
-  // Shorts: fullscreen; all controls/text hidden behind "More" (tap video or More to reveal).
+  // Shorts: fullscreen; controls hidden; tap = pause, swipe = next/prev.
   $('modal').classList.toggle('shorts', !!v.isShort);
   $('modal').classList.remove('sheet-open');
   $('playerDetails').style.display = '';
   $('modal').classList.add('open');
+  if (v.isShort) { shortPaused = false; const fr = $('frame'); fr.classList.remove('anim'); void fr.offsetWidth; fr.classList.add('anim'); prefetchShorts(); }
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (replace) history.replaceState(navSnapshot(), '');
   else if (!restore) pushNav();  // opening a video is a back-able step
@@ -1338,30 +1361,35 @@ function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-ope
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
 $('shortMore').onclick = (e) => { e.stopPropagation(); $('modal').classList.toggle('sheet-open'); };
+$('shortClose').onclick = (e) => { e.stopPropagation(); history.back(); };
+$('navBack').onclick = () => history.back();
+$('navFwd').onclick = () => history.forward();
 document.addEventListener('keydown', e => {
   if (!$('modal').classList.contains('open')) return;
   if (e.key==='Escape') { history.back(); return; }
   if ($('modal').classList.contains('shorts')) {
     if (e.key==='ArrowDown') { e.preventDefault(); shortStep(1); }
     else if (e.key==='ArrowUp') { e.preventDefault(); shortStep(-1); }
+    else if (e.key===' ') { e.preventDefault(); toggleShortPause(); }
   }
 });
-// Shorts: swipe / scroll over the video → next/prev (next = swipe up / scroll down). Tap = toggle "More".
+// Shorts: swipe/scroll over the video → next/prev; tap → pause/resume.
 let shortWheelLock = false;
 $('shortSwipe').addEventListener('wheel', e => {
   e.preventDefault();
   if (shortWheelLock) return; shortWheelLock = true; setTimeout(() => shortWheelLock = false, 500);
   shortStep(e.deltaY > 0 ? 1 : -1);
 }, { passive:false });
-let touchStartY = null, touchStartX = null;
+let touchStartY = null, touchStartX = null, lastTouchAt = 0;
 $('shortSwipe').addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchStartX = e.touches[0].clientX; }, { passive:true });
 $('shortSwipe').addEventListener('touchend', e => {
   if (touchStartY == null) return;
   const dy = e.changedTouches[0].clientY - touchStartY, dx = e.changedTouches[0].clientX - touchStartX;
-  touchStartY = touchStartX = null;
+  touchStartY = touchStartX = null; lastTouchAt = Date.now();
   if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx)) shortStep(dy < 0 ? 1 : -1); // vertical swipe
-  else if (Math.abs(dy) < 12 && Math.abs(dx) < 12) $('modal').classList.toggle('sheet-open'); // tap → show/hide controls
+  else if (Math.abs(dy) < 12 && Math.abs(dx) < 12) toggleShortPause();              // tap → pause/resume
 });
+$('shortSwipe').addEventListener('click', () => { if (Date.now() - lastTouchAt > 500) toggleShortPause(); }); // desktop click
 $('closePanel').onclick = () => history.back();
 
 /* ============================== HISTORY / BACK BUTTON ============================== */
