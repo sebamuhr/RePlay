@@ -70,6 +70,8 @@
   .status b { color:var(--fg); }
 
   .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+  .grid.shortsgrid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+  .thumb.portrait { aspect-ratio:9/16; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; transition:border-color .12s; display:flex; flex-direction:column; }
   .card:hover { border-color:#444; }
   .thumb { position:relative; aspect-ratio:16/9; background:#000; cursor:pointer; }
@@ -118,7 +120,7 @@
   .modal.open { display:flex; }
   .modal { align-items:flex-start; }
   .player { width:100%; max-width:1000px; max-height:94vh; overflow-y:auto; margin-top:2vh; }
-  .player .frame { position:relative; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; }
+  .player .frame { position:relative; aspect-ratio:16/9; background:#000 center/cover no-repeat; border-radius:12px; overflow:hidden; }
   /* Shorts: fullscreen, swipe-to-navigate, controls hidden behind "More" */
   #shortSwipe { display:none; }
   #shortMore { display:none; }
@@ -647,7 +649,7 @@ let homeSub = 'videos'; // 'videos' | 'shorts'
 document.querySelectorAll('.subtab').forEach(t => t.onclick = () => {
   homeSub = t.dataset.sub;
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
-  rerenderFilter();
+  if (currentTab === 'search') rerenderFilter(); else renderTab();
   pushNav();
 });
 
@@ -898,6 +900,7 @@ function rerenderFilter() {
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
+  $('grid').classList.toggle('shortsgrid', homeSub==='shorts');
   renderCards(shown);
   if (!channelView) { // Find-more (quota) only on the normal feed, not in a channel view
     const wrap = document.createElement('div');
@@ -926,7 +929,7 @@ function card(v) {
   const el = document.createElement('div');
   el.className = 'card';
   el.innerHTML = `
-    <div class="thumb">
+    <div class="thumb${v.isShort ? ' portrait' : ''}">
       <img loading="lazy" src="${v.thumb}" alt="">
       ${v.isShort ? '<span class="badge short">SHORT</span>' : ''}
       ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
@@ -1195,7 +1198,7 @@ $('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMor
 function setTab(name){
   currentTab = name;
   document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-  $('homeSubtabs').style.display = name==='search' ? 'flex' : 'none';
+  $('homeSubtabs').style.display = 'flex'; // Videos/Shorts split on every tab
   if (name !== 'search') { channelView = null; $('channelBanner').style.display='none'; }
   renderActiveFilters();
   renderRecentSearches();
@@ -1206,11 +1209,20 @@ function renderTab() {
   if (currentTab==='search') { rerenderFilter(); return; }
   const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
   const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
-  const shown = visibleList(map[currentTab], false);
+  const all = visibleList(map[currentTab], false); // keep both kinds; we split below
+  const hideShorts = data.prefs.hideShorts;
+  if (hideShorts) homeSub = 'videos';
+  document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
+  document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
+  const videos = all.filter(v => !v.isShort), shorts = all.filter(v => v.isShort);
+  document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
+  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
+  const shown = homeSub==='shorts' ? shorts : videos;
+  $('grid').classList.toggle('shortsgrid', homeSub==='shorts');
   renderCards(shown);
   const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
-  flash(`<b>${shown.length}</b> in ${titles[currentTab]}${extra}`, true);
-  $('empty').textContent = shown.length ? '' : `Nothing in ${titles[currentTab]} yet.`;
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'} in ${titles[currentTab]}${extra}`, true);
+  $('empty').textContent = shown.length ? '' : `No ${homeSub} in ${titles[currentTab]} yet.`;
 }
 
 /* ============================== PLAYER + BUDGET GATE ============================== */
@@ -1244,11 +1256,14 @@ function openPlayer(v, restore, replace) {
   // Recreate the iframe each time (src set before insert) so the YT player never pollutes Back history.
   const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
   const frame = $('frame');
+  frame.style.backgroundImage = `url(${v.thumb})`; // show thumbnail under the loading player (smoother)
   const old = $('iframe'); if (old) old.remove();
   const ifr = document.createElement('iframe');
   ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
-  const loop = v.isShort ? `&loop=1&playlist=${v.id}` : '';
-  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${loop}${origin}`;
+  ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s';
+  ifr.onload = () => { ifr.style.opacity = '1'; };
+  const sParams = v.isShort ? `&loop=1&playlist=${v.id}&controls=0` : ''; // shorts loop + hide YT controls
+  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${sParams}${origin}`;
   frame.insertBefore(ifr, frame.firstChild);
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
