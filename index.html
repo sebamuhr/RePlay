@@ -531,6 +531,7 @@ function scheduleSync() {
   syncTimer = setTimeout(() => pushSync().catch(()=>{}), 1500);
 }
 function ghHeaders(){ return { 'Authorization':'Bearer '+secrets.ghToken, 'Accept':'application/vnd.github+json' }; }
+function ghHint(s){ return (s===404||s===401||s===403) ? ' — use a CLASSIC token (github.com/settings/tokens → “Tokens (classic)”) with the “gist” scope ticked. Fine-grained tokens do not work for Gists.' : ''; }
 
 function unionArr(a,b){ return Array.from(new Set([...(a||[]),...(b||[])])); }
 function mergeById(a,b){
@@ -559,7 +560,7 @@ function mergeData(local, remote) {
 
 async function pullSync() {
   const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { headers: ghHeaders() });
-  if (!res.ok) throw new Error('Gist read failed ('+res.status+')');
+  if (!res.ok) throw new Error('Gist read failed ('+res.status+')'+ghHint(res.status));
   const gist = await res.json();
   const file = gist.files && gist.files[GIST_FILE];
   if (!file) return null;
@@ -575,7 +576,7 @@ async function pushSync() {
   saveData({ touch:false, sync:false });
   const body = { files: { [GIST_FILE]: { content: JSON.stringify(data) } } };
   const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(body) });
-  if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'); }
+  if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'+ghHint(res.status)); }
   setSyncState('synced ✓'); refreshAll();
 }
 async function connectGh() {
@@ -587,7 +588,7 @@ async function connectGh() {
       setSyncState('creating gist…');
       const res = await fetch('https://api.github.com/gists', { method:'POST', headers:{...ghHeaders(),'Content-Type':'application/json'},
         body: JSON.stringify({ description:'RePlay data', public:false, files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
-      if (!res.ok) throw new Error('Create failed ('+res.status+')');
+      if (!res.ok) throw new Error('Create failed ('+res.status+')'+ghHint(res.status));
       const gist = await res.json();
       secrets.gistId = gist.id; $('gistId').value = gist.id;
     }
