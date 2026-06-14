@@ -31,6 +31,7 @@
     padding:10px 12px; border-radius:10px; font-size:15px; outline:none; }
   input:focus { border-color:#444; }
   input.secret { -webkit-text-security: disc; text-security: disc; }
+  select { background:var(--card); border:1px solid var(--line); color:var(--fg); padding:9px 10px; border-radius:10px; font-size:14px; outline:none; }
   #q { flex:1; min-width:0; width:100%; }
   .qwrap { position:relative; flex:1; min-width:0; display:flex; }
   .sugbox { display:none; position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--card); border:1px solid var(--line); border-radius:10px; max-height:340px; overflow-y:auto; z-index:40; box-shadow:0 8px 24px rgba(0,0,0,.5); }
@@ -225,7 +226,12 @@
     <div class="sublabel">🚫 Hidden channels</div>
     <div class="blocklist" id="hiddenChannelsList"></div>
     <div class="sublabel" id="trackedLabel">🤖 Auto-tracked (from your searches)</div>
-    <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button><button id="clearTrackedBtn">Clear auto-tracked</button></div>
+    <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button><button id="clearTrackedBtn">Clear auto-tracked</button><button id="importSubsBtn">Import subscriptions (CSV)</button><input type="file" id="importSubsFile" accept=".csv,text/csv" style="display:none"></div>
+    <p style="margin-top:8px">Migrate from YouTube: at <a href="https://takeout.google.com/" target="_blank" rel="noopener">Google Takeout</a> → YouTube → <i>subscriptions</i> (CSV), download, then import here. They all become followed channels (no login needed).</p>
+
+    <div class="sublabel">Import liked videos / playlists / history</div>
+    <div class="row"><span class="lbl" style="min-width:auto">Put videos into</span><select id="importTarget"><option value="favorites">Favorites</option><option value="watchLater">Watch Later</option></select><button id="importVidsBtn">Choose CSV / JSON…</button><input type="file" id="importVidsFile" accept=".csv,.json" style="display:none"></div>
+    <p style="font-size:12px;color:var(--muted)">Liked/playlist <b>CSV</b> → the list above (fetches details, ~1 unit per 50 videos). Watch-history <b>JSON</b> → History (free). Note: Google usually doesn’t include “Watch Later” in Takeout.</p>
 
     <hr class="hr">
     <h3>Auto-fill <span style="color:var(--muted);font-weight:400">— keep your feed fresh, cheaply</span></h3>
@@ -977,6 +983,80 @@ function hideChannel(v) {
 }
 function unhideChannel(id) { data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== id); data.hiddenChannelsUpdatedAt = Date.now(); saveData(); renderChannels(); refreshCurrent(); }
 
+// Import YouTube subscriptions from a Google Takeout CSV (Channel Id, Channel Url, Channel Title)
+function parseCSVLine(line) {
+  const out = []; let cur = '', q = false;
+  for (let i=0; i<line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i+1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else { if (c === '"') q = true; else if (c === ',') { out.push(cur); cur = ''; } else cur += c; }
+  }
+  out.push(cur); return out;
+}
+function importSubs(text) {
+  const existing = new Set(data.followed.map(c => c.id));
+  const hidden = new Set(data.hiddenChannels.map(c => c.id));
+  let added = 0;
+  text.split(/\r?\n/).forEach(line => {
+    if (!line.trim()) return;
+    const cols = parseCSVLine(line);
+    const id = (cols[0]||'').trim();
+    if (!/^UC[\w-]{20,}$/.test(id)) return;            // skips header + invalid rows
+    if (existing.has(id) || hidden.has(id)) return;
+    const title = (cols[2] || cols[cols.length-1] || '').trim();
+    data.followed.push({ id, title, lastVideoId:'', ts:Date.now() });
+    existing.add(id); added++;
+  });
+  if (added) { data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); renderAutoFill(); }
+  toast(added ? `Imported ${added} channel${added>1?'s':''} ✓  — turn on Auto-fill to pull their videos.` : 'No new channels found in that file.');
+}
+$('importSubsBtn').onclick = () => $('importSubsFile').click();
+$('importSubsFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { importSubs(await f.text()); } catch { toast('Could not read that CSV.'); } e.target.value=''; };
+
+// Import liked videos / playlists (CSV of video IDs) or watch history (Takeout JSON).
+async function importVids(file) {
+  const text = await file.text();
+  if (file.name.toLowerCase().endsWith('.json') || /"titleurl"/i.test(text.slice(0, 3000))) { importHistoryJSON(text); return; }
+  const ids = [];
+  text.split(/\r?\n/).forEach(line => { const id = (parseCSVLine(line)[0]||'').trim(); if (/^[A-Za-z0-9_-]{11}$/.test(id)) ids.push(id); });
+  const uniq = Array.from(new Set(ids));
+  if (!uniq.length) { toast('No video IDs found in that file.'); return; }
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key — importing fetches video details.'); return; }
+  const target = $('importTarget').value;
+  toast(`Importing ${uniq.length} videos…`);
+  try {
+    const vids = await fetchVideos(uniq);
+    let added = 0;
+    vids.forEach(v => { if (!data[target].some(x => x.id === v.id)) { data[target].unshift(Object.assign(stripVideo(v), { ts: Date.now() })); if (data.deleted[target]) delete data.deleted[target][v.id]; added++; } });
+    addToPool(vids);
+    saveData(); refreshCurrent();
+    toast(`Imported ${added} into ${target==='favorites'?'Favorites':'Watch Later'} ✓`);
+  } catch (e) { toast(apiErr(e)); }
+}
+function importHistoryJSON(text) {
+  let arr; try { arr = JSON.parse(text); } catch { toast('Could not parse history JSON.'); return; }
+  if (!Array.isArray(arr)) { toast('Unexpected history format.'); return; }
+  const existing = new Set(data.history.map(h => h.id));
+  let added = 0;
+  arr.forEach(e => {
+    const m = /[?&]v=([\w-]{11})/.exec(e.titleUrl || ''); if (!m) return;
+    const id = m[1]; if (existing.has(id)) return;
+    data.history.push({
+      id, title: (e.title||'').replace(/^Watched\s+/, ''),
+      channel: (e.subtitles && e.subtitles[0] && e.subtitles[0].name) || '',
+      thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+      ts: e.time ? new Date(e.time).getTime() : Date.now(), isShort: false,
+    });
+    existing.add(id); added++;
+  });
+  data.history.sort((a,b) => (b.ts||0)-(a.ts||0));
+  data.history = data.history.slice(0, 2000);
+  saveData(); refreshCurrent();
+  toast(added ? `Imported ${added} into History ✓` : 'No new history items found.');
+}
+$('importVidsBtn').onclick = () => $('importVidsFile').click();
+$('importVidsFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { await importVids(f); } catch { toast('Could not read that file.'); } e.target.value=''; };
+
 /* ---- "New uploads?" LED for followed channels (cheap: ~1 unit/channel) ---- */
 const uploadsPlaylist = id => 'UU' + id.slice(2);   // a channel's uploads playlist id
 let ledNew = []; // channel ids that have new uploads since last seen
@@ -989,9 +1069,12 @@ async function channelLatest(id) {
 async function checkChannels() {
   if (!data.followed.length || !secrets.apiKey) { ledNew = []; renderLed(); return; }
   setLed('checking');
-  const newOnes = [];
-  for (const c of data.followed) { try { const latest = await channelLatest(c.id); if (latest && latest !== c.lastVideoId) newOnes.push(c.id); } catch {} }
-  ledNew = newOnes; renderLed();
+  const results = await Promise.allSettled(data.followed.map(async c => {
+    const latest = await channelLatest(c.id);
+    return (latest && latest !== c.lastVideoId) ? c.id : null;
+  }));
+  ledNew = results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value);
+  renderLed();
 }
 async function fetchChannelNew() {
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key ⚙'); return; }
@@ -1369,8 +1452,11 @@ $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFi
     catch(e){ setSyncState('offline', true); }
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
-  if (secrets.apiKey && data.followed.length) checkChannels(); // cheap: light the LED on startup
-  maybeAutoFill(); // throttled topic refresh on open
+  if (secrets.apiKey && data.followed.length) { // light the LED on startup, throttled (you may have many subs)
+    const last = +readJSON('replay.ledAt', 0);
+    if (Date.now() - last > 6*3600e3) { writeJSON('replay.ledAt', Date.now()); checkChannels(); } else renderLed();
+  }
+  maybeAutoFill(); // throttled channel refresh on open
 })();
 </script>
 </body>
