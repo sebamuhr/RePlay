@@ -444,15 +444,36 @@ function rememberSearch(q) {
   renderSuggestions();
 }
 
-// Suggestions while typing: recent searches + your topics + the preset topics.
+// Empty-box suggestions: your recent searches. While typing, live YouTube
+// suggestions take over (see ytSuggest below).
 function renderSuggestions() {
-  const seen = new Set(); const out = [];
-  const add = arr => (arr||[]).forEach(s => { const k=(s||'').toLowerCase(); if (s && !seen.has(k)) { seen.add(k); out.push(s); } });
-  add(data.savedSearches);
-  add(data.prefs.topics);
-  add(typeof PREDEFINED_TOPICS !== 'undefined' ? PREDEFINED_TOPICS : []);
   const dl = $('qsug'); dl.innerHTML = '';
-  out.slice(0, 80).forEach(s => { const o = document.createElement('option'); o.value = s; dl.appendChild(o); });
+  (data.savedSearches || []).slice(0, 15).forEach(s => { const o = document.createElement('option'); o.value = s; dl.appendChild(o); });
+}
+
+// Live YouTube search suggestions via its public autocomplete (JSONP-style,
+// the same source YouTube's own search box uses).
+window.google = window.google || {}; window.google.ac = window.google.ac || {};
+window.google.ac.h = function(data){
+  try {
+    const arr = (data && data[1]) || [];
+    const list = arr.map(it => Array.isArray(it) ? it[0] : it).filter(Boolean);
+    const dl = $('qsug'); dl.innerHTML = '';
+    list.slice(0, 12).forEach(t => { const o = document.createElement('option'); o.value = t; dl.appendChild(o); });
+  } catch {}
+};
+let ytSugTimer = null, ytSugScript = null;
+function ytSuggest(q) {
+  q = (q || '').trim();
+  if (!q) { renderSuggestions(); return; }
+  clearTimeout(ytSugTimer);
+  ytSugTimer = setTimeout(() => {
+    if (ytSugScript) ytSugScript.remove();
+    ytSugScript = document.createElement('script');
+    ytSugScript.onerror = () => renderSuggestions(); // fall back to recent searches if blocked
+    ytSugScript.src = `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&hl=en&q=${encodeURIComponent(q)}`;
+    document.body.appendChild(ytSugScript);
+  }, 150);
 }
 
 /* ============================== SEARCH = FILTER BUILDER ============================== */
@@ -500,6 +521,7 @@ function removeFilter(t) {
 }
 $('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; };
 $('q').addEventListener('keydown', e => { if (e.key==='Enter') { addFilter($('q').value); $('q').value=''; } });
+$('q').addEventListener('input', () => ytSuggest($('q').value));
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
