@@ -132,7 +132,8 @@
 <header>
   <div class="bar">
     <div class="logo">Re<span>Play</span></div>
-    <input id="q" type="search" placeholder="Add a filter and press Enter…" />
+    <input id="q" type="search" list="qsug" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
+    <datalist id="qsug"></datalist>
     <button class="primary" id="searchBtn">Add</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
   </div>
@@ -411,11 +412,11 @@ function addTopic(t) {
   t = (t||'').trim(); if (!t) return;
   const list = data.prefs.topics || (data.prefs.topics = []);
   if (list.some(x => x.toLowerCase()===t.toLowerCase())) return;
-  list.push(t); touchPrefs(); invalidateFeeds(); renderTopics();
+  list.push(t); touchPrefs(); invalidateFeeds(); renderTopics(); renderSuggestions();
 }
 function removeTopic(t) {
   data.prefs.topics = (data.prefs.topics||[]).filter(x => x !== t);
-  touchPrefs(); invalidateFeeds(); renderTopics();
+  touchPrefs(); invalidateFeeds(); renderTopics(); renderSuggestions();
 }
 function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); }
 $('addTopic').onclick = () => { addTopic($('newTopic').value); $('newTopic').value=''; };
@@ -439,6 +440,18 @@ function rememberSearch(q) {
   data.savedSearches = [q, ...data.savedSearches.filter(x=>x!==q)].slice(0,20);
   data.savedSearchesUpdatedAt = Date.now();
   saveData();
+  renderSuggestions();
+}
+
+// Suggestions while typing: recent searches + your topics + the preset topics.
+function renderSuggestions() {
+  const seen = new Set(); const out = [];
+  const add = arr => (arr||[]).forEach(s => { const k=(s||'').toLowerCase(); if (s && !seen.has(k)) { seen.add(k); out.push(s); } });
+  add(data.savedSearches);
+  add(data.prefs.topics);
+  add(typeof PREDEFINED_TOPICS !== 'undefined' ? PREDEFINED_TOPICS : []);
+  const dl = $('qsug'); dl.innerHTML = '';
+  out.slice(0, 80).forEach(s => { const o = document.createElement('option'); o.value = s; dl.appendChild(o); });
 }
 
 /* ============================== SEARCH = FILTER BUILDER ============================== */
@@ -901,7 +914,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderBlocks(); renderTopics(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ renderBlocks(); renderTopics(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 
 (async function init(){
   refreshAll();
