@@ -203,6 +203,13 @@
     <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button></div>
 
     <hr class="hr">
+    <h3>Auto-fill <span style="color:var(--muted);font-weight:400">— keep your feed fresh</span></h3>
+    <p>When you open RePlay, auto-refresh your topics (newest uploads) at most this many times per day. Costs about <b>one search per topic</b> each time; you have ~100 searches/day.</p>
+    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my topics when I open RePlay</label>
+    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Up to</span><input class="num" id="autoFillPerDay" type="number" min="1" value="5"><span class="lbl" style="min-width:auto">times/day</span></div>
+    <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
+
+    <hr class="hr">
     <h3>Shorts</h3>
     <p>Anything under 60 seconds is a Short. They live in their own sub-tab on Home.</p>
     <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts entirely (no Shorts sub-tab)</label>
@@ -273,6 +280,7 @@ function defaultData() {
     prefs: {
       hideShorts: false,
       topics: [],
+      autoFill: { enabled: false, perDay: 5 },
       budgets: {
         shorts: { enabled:false, limit:3, windowMin:60 },
         videos: { enabled:false, limit:5, windowMin:60 },
@@ -292,6 +300,7 @@ let data = Object.assign(defaultData(), readJSON(DATA_KEY, {}));
 // ensure nested shape after upgrades
 data.prefs = Object.assign(defaultData().prefs, data.prefs||{});
 data.prefs.budgets = Object.assign(defaultData().prefs.budgets, data.prefs.budgets||{});
+data.prefs.autoFill = Object.assign(defaultData().prefs.autoFill, data.prefs.autoFill||{});
 data.budgetState = Object.assign(defaultData().budgetState, data.budgetState||{});
 data.deleted = Object.assign(defaultData().deleted, data.deleted||{});
 data.hidden = data.hidden || {};
@@ -892,6 +901,29 @@ function renderLed() {
   else if (ledNew.length) { el.dataset.state='red'; el.title=`${ledNew.length} followed channel(s) have new uploads — tap to load`; }
   else { el.dataset.state='green'; el.title='Followed channels up to date — tap to re-check'; }
 }
+/* ---- Auto-fill: refresh topics a few times/day on open (throttled) ---- */
+function renderAutoFill() {
+  const af = data.prefs.autoFill || { enabled:false, perDay:5 };
+  $('autoFill').checked = !!af.enabled;
+  $('autoFillPerDay').value = af.perDay || 5;
+  const t = (data.prefs.topics||[]).length;
+  $('autoFillEst').textContent = t
+    ? `≈ ${t * (af.perDay||5)} searches/day  (${t} topics × ${af.perDay||5}).  You have ~100/day.`
+    : 'Add some topics first — auto-fill refreshes those.';
+}
+$('autoFill').onchange = () => { data.prefs.autoFill.enabled = $('autoFill').checked; touchPrefs(); renderAutoFill(); };
+$('autoFillPerDay').onchange = () => { data.prefs.autoFill.perDay = Math.max(1, +$('autoFillPerDay').value||1); touchPrefs(); renderAutoFill(); };
+function maybeAutoFill() {
+  const af = data.prefs.autoFill;
+  if (!af || !af.enabled || !secrets.apiKey || !(data.prefs.topics||[]).length) return;
+  const last = +readJSON('replay.autoFillAt', 0);
+  const gap = 24*3600e3 / Math.max(1, af.perDay);   // min time between auto-refreshes
+  if (Date.now() - last < gap) return;
+  writeJSON('replay.autoFillAt', Date.now());
+  if (currentTab==='search') { activeFilters=[]; renderActiveFilters(); }
+  findMore('date'); // newest uploads for your topics → into the pool
+}
+
 function renderChannels() {
   const f = $('followedList');
   if (f) {
@@ -1126,7 +1158,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 $('led').onclick = fetchChannelNew;
 $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
 
@@ -1141,6 +1173,7 @@ $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your ch
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
   if (secrets.apiKey && data.followed.length) checkChannels(); // cheap: light the LED on startup
+  maybeAutoFill(); // throttled topic refresh on open
 })();
 </script>
 </body>
