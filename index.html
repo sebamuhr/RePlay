@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#000000" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<title>RePlay</title>
+<style>
+  :root {
+    --bg:#000; --fg:#f2f2f2; --muted:#8a8a8a; --card:#111; --line:#222;
+    --accent:#ff3b3b; --good:#4ade80; --warn:#fbbf24; --blue:#6ab0ff;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; min-height:100%; }
+  a { color:var(--blue); }
+
+  header { position:sticky; top:0; z-index:10; background:rgba(0,0,0,.93);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+    padding:10px 16px calc(10px + env(safe-area-inset-top)); }
+  .bar { display:flex; gap:8px; align-items:center; max-width:1100px; margin:0 auto; }
+  .logo { font-weight:800; letter-spacing:-.5px; font-size:20px; user-select:none; white-space:nowrap; }
+  .logo span { color:var(--accent); }
+
+  input[type=text], input[type=search], input[type=number], input[type=password] {
+    background:var(--card); border:1px solid var(--line); color:var(--fg);
+    padding:10px 12px; border-radius:10px; font-size:15px; outline:none; }
+  input:focus { border-color:#444; }
+  #q { flex:1; min-width:0; }
+
+  button { background:var(--card); color:var(--fg); border:1px solid var(--line);
+    padding:10px 14px; border-radius:10px; font-size:14px; cursor:pointer; }
+  button:hover { border-color:#444; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .icon-btn { padding:10px 12px; }
+
+  /* budget pills + tabs row */
+  .subbar { max-width:1100px; margin:10px auto 0; display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:space-between; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+  .tab { background:transparent; border:1px solid transparent; color:var(--muted); padding:7px 12px; border-radius:999px; font-size:13px; cursor:pointer; }
+  .tab.active { color:var(--fg); background:var(--card); border-color:var(--line); }
+  .budgets { display:flex; gap:8px; }
+  .budge { font-size:12px; color:var(--muted); background:var(--card); border:1px solid var(--line);
+    padding:6px 10px; border-radius:999px; display:inline-flex; gap:6px; align-items:center; white-space:nowrap; }
+  .budge.locked { color:var(--warn); border-color:#3a2f12; background:#1a1505; }
+  .budge.off { opacity:.45; }
+
+  .chips { max-width:1100px; margin:10px auto 0; display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { background:var(--card); border:1px solid var(--line); color:var(--muted);
+    padding:6px 10px; border-radius:999px; font-size:13px; cursor:pointer; display:inline-flex; gap:6px; align-items:center; }
+  .chip:hover { color:var(--fg); border-color:#444; }
+  .chip .x:hover { color:var(--accent); }
+
+  main { max-width:1100px; margin:0 auto; padding:16px 16px calc(40px + env(safe-area-inset-bottom)); }
+  .status { color:var(--muted); font-size:13px; margin:2px 2px 14px; min-height:18px; }
+  .status b { color:var(--fg); }
+
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; transition:border-color .12s; }
+  .card:hover { border-color:#444; }
+  .thumb { position:relative; aspect-ratio:16/9; background:#000; cursor:pointer; }
+  .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .badge { position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,.85); color:#fff;
+    font-size:11px; padding:2px 6px; border-radius:6px; }
+  .badge.short { left:6px; right:auto; background:var(--accent); font-weight:600; }
+  .meta { padding:10px 12px 12px; }
+  .title { font-size:14px; line-height:1.35; margin:0 0 6px; cursor:pointer; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .channel { color:var(--muted); font-size:12px; margin-bottom:10px; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .actions button { padding:6px 9px; font-size:12px; border-radius:8px; }
+  .actions button.on { color:var(--good); border-color:#1f3a26; }
+
+  /* settings panel */
+  .panel { display:none; max-width:1100px; margin:12px auto 0; background:var(--card);
+    border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .panel.open { display:block; }
+  .panel h3 { margin:18px 0 8px; font-size:14px; }
+  .panel h3:first-child { margin-top:0; }
+  .panel p { color:var(--muted); font-size:12px; margin:0 0 10px; }
+  .row { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center; }
+  .row input[type=text],.row input[type=search],.row input[type=password] { flex:1; min-width:180px; }
+  .row .lbl { font-size:13px; min-width:120px; }
+  .num { width:80px; }
+  .blocklist { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .blockword { background:#1a0d0d; border:1px solid #3a1d1d; color:#ff9a9a; padding:5px 10px;
+    border-radius:999px; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
+  .blockword .x { cursor:pointer; }
+  .hr { border:0; border-top:1px solid var(--line); margin:18px 0; }
+  .switch { display:inline-flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; user-select:none; }
+  .switch input { width:16px; height:16px; }
+  .synced { font-size:11px; color:var(--good); }
+  .syncerr { font-size:11px; color:var(--accent); }
+
+  /* player modal */
+  .modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.94);
+    align-items:center; justify-content:center; padding:16px; }
+  .modal.open { display:flex; }
+  .player { width:100%; max-width:1000px; }
+  .player .frame { position:relative; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; }
+  .player iframe { width:100%; height:100%; border:0; }
+  .player .controls { display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
+  .player .ptitle { font-size:15px; flex:1; min-width:200px; }
+  .player .controls .actions button { padding:8px 12px; font-size:13px; }
+
+  .empty { color:var(--muted); text-align:center; padding:60px 16px; line-height:1.6; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#1a1505;
+    border:1px solid #3a2f12; color:var(--warn); padding:12px 18px; border-radius:12px; font-size:14px;
+    z-index:60; display:none; max-width:90%; text-align:center; }
+  .toast.show { display:block; }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo">Re<span>Play</span></div>
+    <input id="q" type="search" placeholder="Search a topic…" />
+    <button class="primary" id="searchBtn">Search</button>
+    <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
+  </div>
+
+  <div class="subbar">
+    <div class="tabs">
+      <button class="tab active" data-tab="search">Search</button>
+      <button class="tab" data-tab="history">History</button>
+      <button class="tab" data-tab="later">Watch Later</button>
+      <button class="tab" data-tab="favorites">Favorites</button>
+    </div>
+    <div class="budgets" id="budgets"></div>
+  </div>
+
+  <div class="chips" id="savedSearches"></div>
+
+  <!-- SETTINGS PANEL -->
+  <div class="panel" id="panel">
+    <h3>YouTube API key</h3>
+    <p>Free, not a login. Create one at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud → Credentials</a> and enable “YouTube Data API v3”. Stored only on this device.</p>
+    <div class="row"><input id="apiKey" type="password" placeholder="Paste YouTube API key" autocomplete="off"><button id="saveKey">Save</button></div>
+
+    <hr class="hr">
+    <h3>Shorts</h3>
+    <p>Anything under 60 seconds is a Short.</p>
+    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts completely</label>
+
+    <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
+    <div id="budgetPrefs"></div>
+
+    <hr class="hr">
+    <h3>Blocked words</h3>
+    <p>Hide any video whose title, description, tags or channel contains one of these. Case-insensitive.</p>
+    <div class="row"><input id="newBlock" type="text" placeholder="e.g. football"><button id="addBlock">Block</button></div>
+    <div class="blocklist" id="blocklist"></div>
+
+    <hr class="hr">
+    <h3>Sync across devices (GitHub) <span id="syncState"></span></h3>
+    <p>Optional. Your history/favorites/watch-later/blocklist sync via a private GitHub Gist. Create a token (scope: <b>gist</b> only) at <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>. Stored only on this device.</p>
+    <div class="row"><span class="lbl">GitHub token</span><input id="ghToken" type="password" placeholder="ghp_…" autocomplete="off"></div>
+    <div class="row"><span class="lbl">Gist ID</span><input id="gistId" type="text" placeholder="leave empty to auto-create"><button id="connectGh">Connect</button><button id="syncNow">Sync now</button></div>
+
+    <hr class="hr">
+    <h3>Offline backup</h3>
+    <p>Download everything as a file, or restore it on another device.</p>
+    <div class="row"><button id="exportBtn">Export backup</button><button id="importBtn">Import backup</button><input type="file" id="importFile" accept="application/json" style="display:none"></div>
+  </div>
+</header>
+
+<main>
+  <div class="status" id="status"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty"></div>
+</main>
+
+<!-- PLAYER -->
+<div class="modal" id="modal">
+  <div class="player">
+    <div class="frame"><iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+    <div class="controls">
+      <div class="ptitle" id="ptitle"></div>
+      <div class="actions">
+        <button id="pLater">＋ Watch Later</button>
+        <button id="pFav">★ Favorite</button>
+        <button id="pBlock">Block channel</button>
+        <button id="closeModal">Close ✕</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================== STORAGE ============================== */
+const SECRETS_KEY = 'replay.secrets';
+const DATA_KEY = 'replay.data';
+
+function defaultData() {
+  return {
+    blocks: [],
+    savedSearches: [],
+    history: [],          // [{...video, ts}]
+    watchLater: [],
+    favorites: [],
+    prefs: {
+      hideShorts: false,
+      budgets: {
+        shorts: { enabled:false, limit:3, windowMin:60 },
+        videos: { enabled:false, limit:5, windowMin:60 },
+      },
+      updatedAt: 0,
+    },
+    budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
+    updatedAt: 0,
+  };
+}
+const readJSON = (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } };
+const writeJSON = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+
+let secrets = readJSON(SECRETS_KEY, { apiKey:'', ghToken:'', gistId:'' });
+let data = Object.assign(defaultData(), readJSON(DATA_KEY, {}));
+// ensure nested shape after upgrades
+data.prefs = Object.assign(defaultData().prefs, data.prefs||{});
+data.prefs.budgets = Object.assign(defaultData().prefs.budgets, data.prefs.budgets||{});
+data.budgetState = Object.assign(defaultData().budgetState, data.budgetState||{});
+
+function saveData({ touch=true, sync=true } = {}) {
+  if (touch) data.updatedAt = Date.now();
+  writeJSON(DATA_KEY, data);
+  if (sync) scheduleSync();
+}
+function saveSecrets() { writeJSON(SECRETS_KEY, secrets); }
+
+/* ============================== HELPERS ============================== */
+const $ = id => document.getElementById(id);
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function flash(msg, rich=false) { $('status').innerHTML = rich ? msg : escapeHtml(msg); }
+let toastTimer;
+function toast(msg) { const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),4000); }
+
+function parseISODuration(iso) {
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '');
+  if (!m) return 0;
+  return (+m[1]||0)*3600 + (+m[2]||0)*60 + (+m[3]||0);
+}
+function fmtDuration(sec) {
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60;
+  return (h?h+':':'') + (h?String(m).padStart(2,'0'):m) + ':' + String(s).padStart(2,'0');
+}
+function fmtCountdown(ms) {
+  const s=Math.max(0,Math.ceil(ms/1000)), m=Math.floor(s/60);
+  return m>0 ? `${m}m ${s%60}s` : `${s}s`;
+}
+
+/* ============================== BUDGETS ============================== */
+/* Rule: Y after your most recent video, allowance resets to full X.
+   Hitting X locks playback until that reset happens. */
+function budgetWindowMs(bucket){ return data.prefs.budgets[bucket].windowMin * 60000; }
+
+function budgetReset(bucket) { // apply inactivity reset if due
+  const st = data.budgetState[bucket];
+  if (st.count > 0 && Date.now() - st.lastWatch >= budgetWindowMs(bucket)) {
+    st.count = 0; st.lastWatch = 0;
+    return true;
+  }
+  return false;
+}
+function budgetLocked(bucket) {
+  const cfg = data.prefs.budgets[bucket];
+  if (!cfg.enabled) return false;
+  budgetReset(bucket);
+  return data.budgetState[bucket].count >= cfg.limit;
+}
+function budgetUnlockMs(bucket) { // ms until reset
+  return data.budgetState[bucket].lastWatch + budgetWindowMs(bucket) - Date.now();
+}
+function budgetRecord(bucket) {
+  if (!data.prefs.budgets[bucket].enabled) return;
+  const st = data.budgetState[bucket];
+  st.count += 1; st.lastWatch = Date.now();
+}
+
+function renderBudgets() {
+  const wrap = $('budgets'); wrap.innerHTML = '';
+  ['videos','shorts'].forEach(bucket => {
+    const cfg = data.prefs.budgets[bucket];
+    const label = bucket==='shorts' ? '🩳' : '🎬';
+    const el = document.createElement('span');
+    el.className = 'budge' + (!cfg.enabled ? ' off' : (budgetLocked(bucket) ? ' locked' : ''));
+    if (!cfg.enabled) { el.textContent = `${label} ∞`; }
+    else if (budgetLocked(bucket)) { el.textContent = `${label} 🔒 ${fmtCountdown(budgetUnlockMs(bucket))}`; }
+    else { budgetReset(bucket); el.textContent = `${label} ${cfg.limit - data.budgetState[bucket].count}/${cfg.limit}`; }
+    wrap.appendChild(el);
+  });
+}
+// tick to update countdowns / auto-unlock
+setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }, 1000);
+
+/* ============================== SETTINGS UI ============================== */
+$('gearBtn').onclick = () => $('panel').classList.toggle('open');
+$('apiKey').value = secrets.apiKey;
+$('ghToken').value = secrets.ghToken;
+$('gistId').value = secrets.gistId;
+$('hideShorts').checked = data.prefs.hideShorts;
+
+$('saveKey').onclick = () => { secrets.apiKey = $('apiKey').value.trim(); saveSecrets(); toast('API key saved ✓'); };
+$('hideShorts').onchange = () => { data.prefs.hideShorts = $('hideShorts').checked; touchPrefs(); rerenderFilter(); };
+
+function touchPrefs(){ data.prefs.updatedAt = Date.now(); saveData(); }
+
+function renderBudgetPrefs() {
+  const wrap = $('budgetPrefs'); wrap.innerHTML = '';
+  [['videos','Regular videos'],['shorts','Shorts']].forEach(([bucket,name]) => {
+    const cfg = data.prefs.budgets[bucket];
+    const div = document.createElement('div');
+    div.className = 'row';
+    div.innerHTML = `
+      <label class="switch"><input type="checkbox" ${cfg.enabled?'checked':''} data-b="${bucket}" data-k="enabled"> <b>${name}</b></label>
+      <span class="lbl" style="min-width:auto">— watch</span>
+      <input class="num" type="number" min="1" value="${cfg.limit}" data-b="${bucket}" data-k="limit">
+      <span class="lbl" style="min-width:auto">then wait</span>
+      <input class="num" type="number" min="1" value="${cfg.windowMin}" data-b="${bucket}" data-k="windowMin">
+      <span class="lbl" style="min-width:auto">minutes</span>`;
+    wrap.appendChild(div);
+  });
+  wrap.querySelectorAll('input').forEach(inp => {
+    inp.onchange = () => {
+      const b=inp.dataset.b, k=inp.dataset.k;
+      data.prefs.budgets[b][k] = inp.type==='checkbox' ? inp.checked : Math.max(1, +inp.value||1);
+      touchPrefs(); renderBudgets();
+    };
+  });
+}
+
+function renderBlocks() {
+  const wrap = $('blocklist'); wrap.innerHTML = '';
+  if (!data.blocks.length) { wrap.innerHTML = '<span style="color:var(--muted);font-size:13px">No blocked words yet.</span>'; return; }
+  data.blocks.forEach(w => {
+    const el = document.createElement('span');
+    el.className = 'blockword';
+    el.innerHTML = `${escapeHtml(w)} <span class="x">✕</span>`;
+    el.querySelector('.x').onclick = () => { data.blocks = data.blocks.filter(b=>b!==w); saveData(); renderBlocks(); rerenderFilter(); };
+    wrap.appendChild(el);
+  });
+}
+function addBlock(word) {
+  word = (word||'').trim().toLowerCase();
+  if (!word || data.blocks.includes(word)) return;
+  data.blocks.push(word); saveData(); renderBlocks(); rerenderFilter();
+}
+$('addBlock').onclick = () => { addBlock($('newBlock').value); $('newBlock').value=''; };
+$('newBlock').addEventListener('keydown', e => { if (e.key==='Enter') $('addBlock').click(); });
+
+/* ============================== SAVED SEARCHES ============================== */
+function renderSearches() {
+  const wrap = $('savedSearches'); wrap.innerHTML = '';
+  data.savedSearches.forEach(s => {
+    const el = document.createElement('span');
+    el.className = 'chip';
+    el.innerHTML = `<span class="t">${escapeHtml(s)}</span> <span class="x">✕</span>`;
+    el.querySelector('.t').onclick = () => { $('q').value=s; doSearch(s); };
+    el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); saveData(); renderSearches(); };
+    wrap.appendChild(el);
+  });
+}
+function rememberSearch(q) {
+  data.savedSearches = [q, ...data.savedSearches.filter(x=>x!==q)].slice(0,12);
+  saveData(); renderSearches();
+}
+
+/* ============================== SEARCH ============================== */
+$('searchBtn').onclick = () => doSearch($('q').value.trim());
+$('q').addEventListener('keydown', e => { if (e.key==='Enter') doSearch($('q').value.trim()); });
+
+let lastResults = [];
+let currentTab = 'search';
+
+async function doSearch(q) {
+  if (!q) return;
+  setTab('search');
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
+  flash('Searching…'); $('grid').innerHTML=''; $('empty').textContent='';
+  try {
+    const sUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`;
+    const sData = await (await fetch(sUrl)).json();
+    if (sData.error) throw new Error(sData.error.message || 'API error');
+    const ids = (sData.items||[]).map(i=>i.id.videoId).filter(Boolean);
+    if (!ids.length) { flash('No results.'); return; }
+
+    const vUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${ids.join(',')}&key=${secrets.apiKey}`;
+    const vData = await (await fetch(vUrl)).json();
+    lastResults = (vData.items||[]).map(v => {
+      const dur = parseISODuration(v.contentDetails.duration);
+      return {
+        id: v.id, title: v.snippet.title, channel: v.snippet.channelTitle,
+        description: v.snippet.description||'', tags: v.snippet.tags||[],
+        thumb: (v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
+        duration: dur, isShort: dur>0 && dur<60,
+      };
+    });
+    rememberSearch(q);
+    rerenderFilter();
+  } catch (err) { flash('Error: ' + err.message); }
+}
+
+function isBlocked(v) {
+  if (!data.blocks.length) return false;
+  const hay = (v.title+' '+v.description+' '+(v.tags||[]).join(' ')+' '+v.channel).toLowerCase();
+  return data.blocks.some(w => hay.includes(w));
+}
+
+/* ============================== RENDER LIST ============================== */
+function visibleList(items) {
+  return items.filter(v => !isBlocked(v) && !(data.prefs.hideShorts && v.isShort));
+}
+
+function rerenderFilter() {
+  if (currentTab !== 'search') return renderTab();
+  const shown = visibleList(lastResults);
+  const hidden = lastResults.length - shown.length;
+  renderCards(shown);
+  let msg = `<b>${shown.length}</b> videos`;
+  if (hidden) msg += ` · <b>${hidden}</b> hidden by your filters`;
+  flash(msg, true);
+  $('empty').textContent = shown.length ? '' :
+    (lastResults.length ? 'Everything here was filtered out by your blocks/Shorts setting.' :
+     'Search a topic above to start.');
+}
+
+function renderCards(list) {
+  const grid = $('grid'); grid.innerHTML='';
+  list.forEach(v => grid.appendChild(card(v)));
+}
+
+function card(v) {
+  const inLater = data.watchLater.some(x=>x.id===v.id);
+  const inFav = data.favorites.some(x=>x.id===v.id);
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.innerHTML = `
+    <div class="thumb">
+      <img loading="lazy" src="${v.thumb}" alt="">
+      ${v.isShort ? '<span class="badge short">SHORT</span>' : ''}
+      ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
+    </div>
+    <div class="meta">
+      <p class="title">${escapeHtml(v.title)}</p>
+      <div class="channel">${escapeHtml(v.channel)}</div>
+      <div class="actions">
+        <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
+        <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
+      </div>
+    </div>`;
+  el.querySelector('.thumb').onclick = () => play(v);
+  el.querySelector('.title').onclick = () => play(v);
+  el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
+  el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
+  return el;
+}
+
+/* ============================== LISTS ============================== */
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,description:v.description,tags:v.tags,thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
+function toggleList(listName, v) {
+  const list = data[listName];
+  const i = list.findIndex(x=>x.id===v.id);
+  if (i>=0) list.splice(i,1); else list.unshift(Object.assign(stripVideo(v),{ts:Date.now()}));
+  saveData();
+  if (currentTab==='search') rerenderFilter(); else renderTab();
+}
+function addHistory(v) {
+  data.history = data.history.filter(x=>x.id!==v.id);
+  data.history.unshift(Object.assign(stripVideo(v),{ts:Date.now()}));
+  data.history = data.history.slice(0,2000);
+  saveData();
+}
+
+/* ============================== TABS ============================== */
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
+function setTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.tab===name)); renderTab(); }
+function renderTab() {
+  if (currentTab==='search') { rerenderFilter(); return; }
+  const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
+  const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
+  const shown = visibleList(map[currentTab]);
+  renderCards(shown);
+  flash(`<b>${shown.length}</b> in ${titles[currentTab]}`, true);
+  $('empty').textContent = shown.length ? '' : `Nothing in ${titles[currentTab]} yet.`;
+}
+
+/* ============================== PLAYER + BUDGET GATE ============================== */
+let playing = null;
+function play(v) {
+  const bucket = v.isShort ? 'shorts' : 'videos';
+  if (budgetLocked(bucket)) {
+    renderBudgets();
+    toast(`${bucket==='shorts'?'Shorts':'Videos'} limit reached — back in ${fmtCountdown(budgetUnlockMs(bucket))} 🌙`);
+    return;
+  }
+  budgetRecord(bucket);
+  addHistory(v);          // saves + budget state persisted together
+  renderBudgets();
+  playing = v;
+  $('iframe').src = `https://www.youtube.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1`;
+  $('ptitle').textContent = v.title;
+  syncPlayerButtons();
+  $('modal').classList.add('open');
+}
+function syncPlayerButtons() {
+  if (!playing) return;
+  const inLater=data.watchLater.some(x=>x.id===playing.id), inFav=data.favorites.some(x=>x.id===playing.id);
+  $('pLater').classList.toggle('on',inLater); $('pLater').textContent = inLater?'✓ Watch Later':'＋ Watch Later';
+  $('pFav').classList.toggle('on',inFav); $('pFav').textContent = inFav?'★ Favorited':'★ Favorite';
+}
+$('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
+$('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
+$('pBlock').onclick = () => { if(!playing) return; addBlock(playing.channel.toLowerCase()); closeModal(); toast(`Hiding “${playing.channel}” from now on.`); };
+function closeModal(){ $('modal').classList.remove('open'); $('iframe').src=''; if(currentTab!=='search') renderTab(); else rerenderFilter(); }
+$('closeModal').onclick = closeModal;
+$('modal').addEventListener('click', e => { if (e.target===$('modal')) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key==='Escape' && $('modal').classList.contains('open')) closeModal(); });
+
+/* ============================== GITHUB SYNC ============================== */
+const GIST_FILE = 'replay-data.json';
+let syncTimer = null;
+function scheduleSync() {
+  if (!secrets.ghToken || !secrets.gistId) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => pushSync().catch(()=>{}), 1500);
+}
+function ghHeaders(){ return { 'Authorization':'Bearer '+secrets.ghToken, 'Accept':'application/vnd.github+json' }; }
+
+function unionArr(a,b){ return Array.from(new Set([...(a||[]),...(b||[])])); }
+function mergeById(a,b){
+  const m = new Map();
+  [...(a||[]),...(b||[])].forEach(it => { const ex=m.get(it.id); if(!ex || (it.ts||0)>(ex.ts||0)) m.set(it.id,it); });
+  return Array.from(m.values()).sort((x,y)=>(y.ts||0)-(x.ts||0));
+}
+function mergeBudget(a,b){
+  const out={};
+  ['shorts','videos'].forEach(k=>{ const x=a?.[k]||{count:0,lastWatch:0}, y=b?.[k]||{count:0,lastWatch:0}; out[k]=(y.lastWatch>x.lastWatch)?y:x; });
+  return out;
+}
+function mergeData(local, remote) {
+  if (!remote) return local;
+  const m = defaultData();
+  m.blocks = unionArr(local.blocks, remote.blocks);
+  m.savedSearches = unionArr(local.savedSearches, remote.savedSearches).slice(0,12);
+  m.history = mergeById(local.history, remote.history).slice(0,2000);
+  m.watchLater = mergeById(local.watchLater, remote.watchLater);
+  m.favorites = mergeById(local.favorites, remote.favorites);
+  m.prefs = (remote.prefs?.updatedAt||0) > (local.prefs?.updatedAt||0) ? remote.prefs : local.prefs;
+  m.budgetState = mergeBudget(local.budgetState, remote.budgetState);
+  m.updatedAt = Math.max(local.updatedAt||0, remote.updatedAt||0);
+  return m;
+}
+
+async function pullSync() {
+  const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { headers: ghHeaders() });
+  if (!res.ok) throw new Error('Gist read failed ('+res.status+')');
+  const gist = await res.json();
+  const file = gist.files && gist.files[GIST_FILE];
+  if (!file) return null;
+  const content = file.truncated ? await (await fetch(file.raw_url)).text() : file.content;
+  try { return JSON.parse(content); } catch { return null; }
+}
+async function pushSync() {
+  if (!secrets.ghToken || !secrets.gistId) return;
+  setSyncState('syncing…');
+  let remote = null;
+  try { remote = await pullSync(); } catch {}
+  data = mergeData(data, remote);
+  saveData({ touch:false, sync:false });
+  const body = { files: { [GIST_FILE]: { content: JSON.stringify(data) } } };
+  const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'); }
+  setSyncState('synced ✓'); refreshAll();
+}
+async function connectGh() {
+  secrets.ghToken = $('ghToken').value.trim();
+  secrets.gistId = $('gistId').value.trim();
+  if (!secrets.ghToken) { toast('Paste a GitHub token first.'); return; }
+  try {
+    if (!secrets.gistId) {
+      setSyncState('creating gist…');
+      const res = await fetch('https://api.github.com/gists', { method:'POST', headers:{...ghHeaders(),'Content-Type':'application/json'},
+        body: JSON.stringify({ description:'RePlay data', public:false, files:{ [GIST_FILE]:{ content: JSON.stringify(data) } } }) });
+      if (!res.ok) throw new Error('Create failed ('+res.status+')');
+      const gist = await res.json();
+      secrets.gistId = gist.id; $('gistId').value = gist.id;
+    }
+    saveSecrets();
+    await pushSync();
+    toast('GitHub sync connected ✓');
+  } catch (err) { setSyncState('error', true); toast('Sync error: '+err.message); }
+}
+$('connectGh').onclick = connectGh;
+$('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); pushSync().catch(e=>toast('Sync error: '+e.message)); };
+function setSyncState(text, err=false){ const el=$('syncState'); el.textContent=text; el.className = err?'syncerr':'synced'; }
+
+/* ============================== EXPORT / IMPORT ============================== */
+$('exportBtn').onclick = () => {
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `replay-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+};
+$('importBtn').onclick = () => $('importFile').click();
+$('importFile').onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const incoming = JSON.parse(await f.text());
+    data = mergeData(data, incoming);
+    saveData();
+    refreshAll();
+    toast('Backup imported ✓');
+  } catch { toast('Could not read that file.'); }
+  e.target.value='';
+};
+
+/* ============================== INIT ============================== */
+function refreshAll(){ renderBlocks(); renderSearches(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; renderTab(); }
+
+(async function init(){
+  refreshAll();
+  if (!secrets.apiKey) $('panel').classList.add('open');
+  if (secrets.ghToken && secrets.gistId) {
+    try { const remote = await pullSync(); if (remote){ data = mergeData(data, remote); saveData({touch:false,sync:false}); refreshAll(); setSyncState('synced ✓'); } }
+    catch(e){ setSyncState('offline', true); }
+  }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
