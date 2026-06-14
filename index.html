@@ -1123,7 +1123,8 @@ function openPlayer(v, restore) {
   $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
-  $('pchannel').innerHTML = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
+  const chLink = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
+  $('pchannel').innerHTML = chLink + (v.publishedAt ? ` · ${escapeHtml(timeAgo(v.publishedAt))}` : '');
   const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
   const desc = v.description || '';
   $('pdesc').textContent = desc;
