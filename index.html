@@ -71,7 +71,14 @@
 
   .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
   .grid.shortsgrid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
+  .grid.changrid { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px; }
   .thumb.portrait { aspect-ratio:9/16; }
+  .chan-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 12px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:10px; text-align:center; transition:border-color .12s; }
+  .chan-card:hover { border-color:#444; }
+  .chan-card img, .chan-card .av { width:64px; height:64px; border-radius:50%; object-fit:cover; }
+  .chan-card .av { background:#222; display:flex; align-items:center; justify-content:center; font-size:26px; color:#888; }
+  .chan-card .nm { font-size:13px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; transition:border-color .12s; display:flex; flex-direction:column; }
   .card:hover { border-color:#444; }
   .thumb { position:relative; aspect-ratio:16/9; background:#000; cursor:pointer; }
@@ -217,6 +224,7 @@
       <button class="tab" data-tab="history">History</button>
       <button class="tab" data-tab="later">Watch Later</button>
       <button class="tab" data-tab="favorites">Favorites</button>
+      <button class="tab" data-tab="channels">Channels</button>
       <button class="tab" id="refreshBtn" title="Refresh feed">⟳</button>
     </div>
     <div class="statusbar">
@@ -915,6 +923,7 @@ function rerenderFilter() {
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
+  $('grid').classList.remove('changrid');
   $('grid').classList.toggle('shortsgrid', homeSub==='shorts');
   renderCards(shown);
   if (!channelView) { // Find-more (quota) only on the normal feed, not in a channel view
@@ -1213,15 +1222,49 @@ $('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMor
 function setTab(name){
   currentTab = name;
   document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
-  $('homeSubtabs').style.display = 'flex'; // Videos/Shorts split on every tab
+  $('homeSubtabs').style.display = (name==='channels') ? 'none' : 'flex'; // no Videos/Shorts split on Channels
   if (name !== 'search') { channelView = null; $('channelBanner').style.display='none'; }
   renderActiveFilters();
   renderRecentSearches();
   if (name==='search') { showFeed(); return; }   // free, local feed from the pool
   renderTab();
 }
+function renderChannelsTab() {
+  const grid = $('grid'); grid.className = 'grid changrid'; grid.innerHTML = '';
+  const list = data.followed || [];
+  flash(`<b>${list.length}</b> followed channels`, true);
+  $('empty').textContent = list.length ? '' : 'No followed channels yet — ▶ a video, then “👍 Follow channel” (or import your subscriptions in ⚙).';
+  list.forEach(c => {
+    const el = document.createElement('div'); el.className = 'chan-card';
+    const hasAv = c.thumb && c.thumb !== 'none';
+    const av = hasAv ? `<img loading="lazy" src="${c.thumb}" alt="">` : `<div class="av">${escapeHtml((c.title||'?').slice(0,1).toUpperCase())}</div>`;
+    el.innerHTML = `${av}<div class="nm">${escapeHtml(c.title||c.id)}</div>`;
+    el.onclick = () => openChannel(c.id, c.title);
+    grid.appendChild(el);
+  });
+  ensureChannelAvatars();
+}
+async function ensureChannelAvatars() {
+  if (!secrets.apiKey) return;
+  const missing = (data.followed||[]).filter(c => !c.thumb);
+  if (!missing.length) return;
+  const ids = missing.map(c => c.id), got = {};
+  try {
+    for (let i=0; i<ids.length; i+=50) {
+      const batch = ids.slice(i, i+50);
+      const d = await (await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${batch.join(',')}&key=${secrets.apiKey}`)).json();
+      if (d.error) throw new Error(d.error.message);
+      (d.items||[]).forEach(it => { got[it.id] = (it.snippet.thumbnails.default||it.snippet.thumbnails.medium||{}).url || 'none'; });
+    }
+  } catch {}
+  missing.forEach(c => { c.thumb = got[c.id] || 'none'; });   // sentinel 'none' so we don't refetch failures
+  data.followedUpdatedAt = Date.now(); saveData();
+  if (currentTab === 'channels') renderChannelsTab();
+}
 function renderTab() {
   if (currentTab==='search') { rerenderFilter(); return; }
+  if (currentTab==='channels') { renderChannelsTab(); return; }
+  $('grid').classList.remove('changrid');
   const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
   const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
   const all = visibleList(map[currentTab], false); // keep both kinds; we split below
