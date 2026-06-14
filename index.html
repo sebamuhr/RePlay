@@ -115,6 +115,9 @@
   .modal { align-items:flex-start; }
   .player { width:100%; max-width:1000px; max-height:94vh; overflow-y:auto; margin-top:2vh; }
   .player .frame { position:relative; aspect-ratio:16/9; background:#000; border-radius:12px; overflow:hidden; }
+  /* Shorts: portrait, full-height player */
+  .modal.shorts .player { max-width:600px; }
+  .modal.shorts .frame { aspect-ratio:9/16; height:82vh; width:auto; max-width:100%; margin:0 auto; }
   .pchannel { color:var(--muted); font-size:13px; margin-top:10px; }
   .pdesc { white-space:pre-wrap; word-break:break-word; color:#d6d6d6; font-size:13px; line-height:1.55; margin-top:10px; border-top:1px solid var(--line); padding-top:12px; }
   .pdesc a { color:var(--blue); }
@@ -1219,6 +1222,7 @@ function openPlayer(v, restore) {
   requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
   renderRelated(v);
   syncPlayerButtons();
+  $('modal').classList.toggle('shorts', !!v.isShort); // portrait player for Shorts
   $('modal').classList.add('open');
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (!restore) pushNav();  // opening a video is a back-able step
