@@ -31,7 +31,14 @@
     padding:10px 12px; border-radius:10px; font-size:15px; outline:none; }
   input:focus { border-color:#444; }
   input.secret { -webkit-text-security: disc; text-security: disc; }
-  #q { flex:1; min-width:0; }
+  #q { flex:1; min-width:0; width:100%; }
+  .qwrap { position:relative; flex:1; min-width:0; display:flex; }
+  .sugbox { display:none; position:absolute; top:calc(100% + 6px); left:0; right:0; background:var(--card); border:1px solid var(--line); border-radius:10px; max-height:340px; overflow-y:auto; z-index:40; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+  .sugbox.open { display:block; }
+  .sugrow { padding:9px 12px; font-size:14px; cursor:pointer; display:flex; gap:9px; align-items:center; border-bottom:1px solid #1a1a1a; }
+  .sugrow:last-child { border-bottom:0; }
+  .sugrow:hover, .sugrow.active { background:#1c1c1c; }
+  .sugrow .ico { font-size:12px; opacity:.6; width:14px; text-align:center; }
 
   button { background:var(--card); color:var(--fg); border:1px solid var(--line);
     padding:10px 14px; border-radius:10px; font-size:14px; cursor:pointer; }
@@ -136,8 +143,10 @@
 <header>
   <div class="bar">
     <div class="logo">Re<span>Play</span></div>
-    <input id="q" type="search" list="qsug" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
-    <datalist id="qsug"></datalist>
+    <div class="qwrap">
+      <input id="q" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
+      <div id="sugBox" class="sugbox"></div>
+    </div>
     <button class="primary" id="searchBtn">Add</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
   </div>
@@ -454,33 +463,57 @@ function rememberSearch(q) {
   renderSuggestions();
 }
 
-// Empty-box suggestions: your recent searches. While typing, live YouTube
-// suggestions take over (see ytSuggest below).
-function renderSuggestions() {
-  const dl = $('qsug'); dl.innerHTML = '';
-  (data.savedSearches || []).slice(0, 15).forEach(s => { const o = document.createElement('option'); o.value = s; dl.appendChild(o); });
+/* ---- Search suggestions: custom dropdown (local matches + live YouTube) ---- */
+let sugLocal = [], sugYT = [], sugActive = -1;
+
+function buildLocalSuggestions(q) {
+  const ql = (q||'').toLowerCase().trim();
+  const seen = new Set(); const pool = [];
+  const add = (s, tag) => { const k=(s||'').toLowerCase(); if (s && !seen.has(k)) { seen.add(k); pool.push({ text:s, tag }); } };
+  (data.savedSearches || []).forEach(s => add(s, 'recent'));
+  (data.prefs.topics || []).forEach(s => add(s, 'topic'));
+  PREDEFINED_TOPICS.forEach(s => add(s, 'preset'));
+  if (!ql) return pool.filter(x => x.tag==='recent').slice(0, 8);     // empty box → recent searches
+  return pool.filter(x => x.text.toLowerCase().includes(ql)).slice(0, 8);
 }
 
-// Live YouTube search suggestions via its public autocomplete (JSONP-style,
-// the same source YouTube's own search box uses).
+function renderSugg() {
+  const box = $('sugBox');
+  const seen = new Set(); const items = [];
+  sugYT.forEach(t => { const k=t.toLowerCase(); if (!seen.has(k)) { seen.add(k); items.push({ text:t, tag:'yt' }); } });
+  sugLocal.forEach(o => { const k=o.text.toLowerCase(); if (!seen.has(k)) { seen.add(k); items.push(o); } });
+  const top = items.slice(0, 12);
+  box._items = top;
+  if (!top.length || document.activeElement !== $('q')) { box.classList.remove('open'); box.innerHTML=''; return; }
+  box.innerHTML = '';
+  top.forEach((o, i) => {
+    const row = document.createElement('div'); row.className = 'sugrow' + (i===sugActive ? ' active' : '');
+    const ico = o.tag==='recent' ? '🕘' : (o.tag==='yt' ? '🔎' : '👍');
+    row.innerHTML = `<span class="ico">${ico}</span><span>${escapeHtml(o.text)}</span>`;
+    row.onmousedown = (e) => { e.preventDefault(); pickSugg(o.text); };
+    box.appendChild(row);
+  });
+  box.classList.add('open');
+}
+function pickSugg(text) { $('q').value=''; sugActive=-1; $('sugBox').classList.remove('open'); addFilter(text); }
+function hideSugg() { $('sugBox').classList.remove('open'); }
+
+// kept name for existing callers (refresh/remember/topic changes)
+function renderSuggestions() { if ($('sugBox').classList.contains('open')) { sugLocal = buildLocalSuggestions($('q').value); renderSugg(); } }
+
+// Live YouTube suggestions via its public autocomplete (script include → google.ac.h).
 window.google = window.google || {}; window.google.ac = window.google.ac || {};
-window.google.ac.h = function(data){
-  try {
-    const arr = (data && data[1]) || [];
-    const list = arr.map(it => Array.isArray(it) ? it[0] : it).filter(Boolean);
-    const dl = $('qsug'); dl.innerHTML = '';
-    list.slice(0, 12).forEach(t => { const o = document.createElement('option'); o.value = t; dl.appendChild(o); });
-  } catch {}
+window.google.ac.h = function(d){
+  try { const arr = (d && d[1]) || []; sugYT = arr.map(it => Array.isArray(it) ? it[0] : it).filter(Boolean).slice(0,10); renderSugg(); } catch {}
 };
 let ytSugTimer = null, ytSugScript = null;
 function ytSuggest(q) {
-  q = (q || '').trim();
-  if (!q) { renderSuggestions(); return; }
+  q = (q || '').trim(); if (!q) return;
   clearTimeout(ytSugTimer);
   ytSugTimer = setTimeout(() => {
     if (ytSugScript) ytSugScript.remove();
     ytSugScript = document.createElement('script');
-    ytSugScript.onerror = () => renderSuggestions(); // fall back to recent searches if blocked
+    ytSugScript.onerror = () => {}; // local suggestions already shown
     ytSugScript.src = `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&hl=en&q=${encodeURIComponent(q)}`;
     document.body.appendChild(ytSugScript);
   }, 150);
@@ -529,9 +562,26 @@ function removeFilter(t) {
   if (activeFilters.length) runFilterSearch(); else loadHome();
   pushNav();
 }
-$('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; };
-$('q').addEventListener('keydown', e => { if (e.key==='Enter') { addFilter($('q').value); $('q').value=''; } });
-$('q').addEventListener('input', () => ytSuggest($('q').value));
+$('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; hideSugg(); };
+$('q').addEventListener('input', () => {
+  const q = $('q').value;
+  sugActive = -1; sugYT = [];
+  sugLocal = buildLocalSuggestions(q);
+  renderSugg();
+  ytSuggest(q);
+});
+$('q').addEventListener('focus', () => { sugActive = -1; sugLocal = buildLocalSuggestions($('q').value); renderSugg(); if ($('q').value.trim()) ytSuggest($('q').value); });
+$('q').addEventListener('blur', () => setTimeout(hideSugg, 150));
+$('q').addEventListener('keydown', e => {
+  const box = $('sugBox'); const items = box._items || [];
+  if (e.key === 'ArrowDown' && box.classList.contains('open')) { e.preventDefault(); sugActive = Math.min(items.length-1, sugActive+1); renderSugg(); }
+  else if (e.key === 'ArrowUp' && box.classList.contains('open')) { e.preventDefault(); sugActive = Math.max(0, sugActive-1); renderSugg(); }
+  else if (e.key === 'Escape') { hideSugg(); }
+  else if (e.key === 'Enter') {
+    if (sugActive >= 0 && items[sugActive]) { e.preventDefault(); pickSugg(items[sugActive].text); }
+    else { addFilter($('q').value); $('q').value=''; hideSugg(); }
+  }
+});
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
