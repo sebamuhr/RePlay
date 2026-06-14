@@ -183,6 +183,7 @@
         <button id="pLater">＋ Watch Later</button>
         <button id="pFav">★ Favorite</button>
         <button id="pBlock">Block channel</button>
+        <a id="pOpen" href="#" target="_blank" rel="noopener"><button type="button">Open on YouTube ↗</button></a>
         <button id="closeModal">Close ✕</button>
       </div>
     </div>
@@ -501,7 +502,8 @@ function play(v) {
   addHistory(v);          // saves + budget state persisted together
   renderBudgets();
   playing = v;
-  $('iframe').src = `https://www.youtube.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1`;
+  $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1`;
+  $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
   syncPlayerButtons();
   $('modal').classList.add('open');
