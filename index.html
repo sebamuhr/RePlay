@@ -1384,11 +1384,11 @@ async function pushSync() {
   setSyncState('syncing…');
   let remote;
   try { remote = await pullSync(); }
-  catch (e) { setSyncState('error', true); toast('Sync paused — couldn’t read your Gist safely, so nothing was overwritten. ('+e.message+')'); return; }
+  catch (e) { setSyncState('read failed', true); throw new Error('Could not READ your Gist ('+e.message+') — nothing was overwritten.'); }
   data = mergeData(data, remote);
   saveData({ touch:false, sync:false });
   const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify({ files:{ [GIST_FILE]:{ content: syncPayload() } } }) });
-  if (!res.ok) { setSyncState('error', true); throw new Error('Gist write failed ('+res.status+')'+ghHint(res.status)); }
+  if (!res.ok) { setSyncState('write failed', true); throw new Error('Could not WRITE your Gist ('+res.status+')'+ghHint(res.status)); }
   setSyncState('synced ✓'); softRefresh();
 }
 // Recovery: overwrite the Gist with THIS device's data (no pull). Use on the device that has your data.
@@ -1423,11 +1423,12 @@ async function connectGh() {
       if (!res.ok) throw new Error('Create failed ('+res.status+')'+ghHint(res.status));
       const gist = await res.json();
       secrets.gistId = gist.id; $('gistId').value = gist.id;
+      toast('Created a NEW empty Gist. Its ID is in the field — use that SAME ID on your other devices.');
     }
     saveSecrets();
     await pushSync();
-    toast('GitHub sync connected ✓');
-  } catch (err) { setSyncState('error', true); toast('Sync error: '+err.message); }
+    toast(`Synced ✓ — ${data.favorites.length} favorites · ${data.watchLater.length} watch-later · ${data.history.length} history · ${(data.pool||[]).length} in pool.`);
+  } catch (err) { setSyncState('error', true); alert('Sync error:\n\n' + err.message); }
 }
 $('connectGh').onclick = connectGh;
 $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); pushSync().catch(e=>toast('Sync error: '+e.message)); };
