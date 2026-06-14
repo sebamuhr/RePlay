@@ -273,6 +273,8 @@ function defaultData() {
     history: [],          // [{...video, ts}]
     watchLater: [],
     favorites: [],
+    pool: [],             // discovered videos (the browsable feed) — synced
+    tracked: [],          // auto-tracked channels ("fake follow") — synced
     hidden: {},           // videoId -> ts ("not interested", hidden forever)
     followed: [],         // [{id,title,lastVideoId,ts}] channels you follow
     followedUpdatedAt: 0,
@@ -307,16 +309,17 @@ data.deleted = Object.assign(defaultData().deleted, data.deleted||{});
 data.hidden = data.hidden || {};
 data.followed = data.followed || [];
 data.hiddenChannels = data.hiddenChannels || [];
+data.pool = data.pool || [];
+data.tracked = data.tracked || [];
 
-// Local pool of discovered videos (device-only cache; the browsable "feed").
-const POOL_KEY = 'replay.pool', POOL_MAX = 1000;
-let pool = readJSON(POOL_KEY, []);
-function savePool(){ writeJSON(POOL_KEY, pool); }
-
-// Auto-tracked channels ("fake follow"): collected from search results, checked cheaply.
-const TRACKED_KEY = 'replay.tracked', TRACKED_MAX = 50;
-let tracked = readJSON(TRACKED_KEY, []);
-function saveTracked(){ writeJSON(TRACKED_KEY, tracked); }
+// Pool (browsable feed) + auto-tracked channels now live in the synced data.
+// (migrate any old device-local copies on first run)
+const POOL_MAX = 1000, TRACKED_MAX = 50;
+let pool = (data.pool && data.pool.length) ? data.pool : readJSON('replay.pool', []);
+let tracked = (data.tracked && data.tracked.length) ? data.tracked : readJSON('replay.tracked', []);
+data.pool = pool; data.tracked = tracked; // keep data and locals on the same arrays
+function savePool(){ data.pool = pool; saveData(); }
+function saveTracked(){ data.tracked = tracked; saveData(); }
 
 function saveData({ touch=true, sync=true } = {}) {
   if (touch) data.updatedAt = Date.now();
@@ -840,7 +843,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description,tags:v.tags,thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:(v.description||'').slice(0,200),tags:(v.tags||[]).slice(0,12),thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
@@ -1109,6 +1112,15 @@ function mergeBudget(a,b){
   ['shorts','videos'].forEach(k=>{ const x=a?.[k]||{count:0,lastWatch:0}, y=b?.[k]||{count:0,lastWatch:0}; out[k]=(y.lastWatch>x.lastWatch)?y:x; });
   return out;
 }
+function mergeTracked(a,b){
+  const byId = new Map();
+  [...(a||[]),...(b||[])].forEach(c => {
+    const ex = byId.get(c.id);
+    if (!ex) byId.set(c.id, {...c});
+    else { ex.score = Math.max(ex.score||0, c.score||0); if ((c.ts||0) > (ex.ts||0)) { ex.lastVideoId = c.lastVideoId; ex.ts = c.ts; ex.title = c.title || ex.title; } }
+  });
+  return Array.from(byId.values()).sort((x,y) => (y.score||0)-(x.score||0)).slice(0, TRACKED_MAX);
+}
 function mergeData(local, remote) {
   if (!remote) return local;
   const m = defaultData();
@@ -1133,6 +1145,9 @@ function mergeData(local, remote) {
   m.followed = ((rf > lf ? remote.followed : local.followed) || []); m.followedUpdatedAt = Math.max(lf, rf);
   const lhc = local.hiddenChannelsUpdatedAt||0, rhc = remote.hiddenChannelsUpdatedAt||0;
   m.hiddenChannels = ((rhc > lhc ? remote.hiddenChannels : local.hiddenChannels) || []); m.hiddenChannelsUpdatedAt = Math.max(lhc, rhc);
+  // pool & auto-tracked channels: merge so the feed is shared across devices
+  m.pool = mergeById(local.pool, remote.pool).slice(0, POOL_MAX);
+  m.tracked = mergeTracked(local.tracked, remote.tracked);
   m.updatedAt = Math.max(local.updatedAt||0, remote.updatedAt||0);
   return m;
 }
@@ -1160,6 +1175,7 @@ async function pushSync() {
 }
 // Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
 function softRefresh() {
+  pool = data.pool || []; tracked = data.tracked || []; // re-link after a merge
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   renderActiveFilters(); renderRecentSearches();
@@ -1209,7 +1225,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 $('led').onclick = fetchChannelNew;
 $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
 $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
