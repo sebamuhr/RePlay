@@ -136,8 +136,10 @@
   .modal.shorts #shortMore { display:block; position:absolute; top:14px; left:14px; z-index:6;
     background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; }
   #playerClose { position:fixed; top:14px; right:14px; z-index:70; width:40px; height:40px; border-radius:50%;
-    background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.35); font-size:17px; line-height:1; padding:0;
-    display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.35); padding:0; cursor:pointer; font-size:0; }
+  #playerClose::before, #playerClose::after { content:''; position:absolute; top:50%; left:50%; width:16px; height:2px; background:#fff; border-radius:2px; }
+  #playerClose::before { transform:translate(-50%,-50%) rotate(45deg); }
+  #playerClose::after  { transform:translate(-50%,-50%) rotate(-45deg); }
   @keyframes shortIn { from { transform:translateY(40px); opacity:.15; } to { transform:none; opacity:1; } }
   .modal.shorts .frame.anim { animation: shortIn .28s ease; }
   .modal.shorts #playerMeta { display:none; }
@@ -302,7 +304,7 @@
 
 <!-- PLAYER -->
 <div class="modal" id="modal">
-  <button id="playerClose" type="button" title="Close">✕</button>
+  <button id="playerClose" type="button" title="Close"></button>
   <div class="player">
     <div class="frame" id="frame">
       <div id="svTrack"></div>
