@@ -200,12 +200,13 @@
     <div class="blocklist" id="followedList"></div>
     <div class="sublabel">🚫 Hidden channels</div>
     <div class="blocklist" id="hiddenChannelsList"></div>
-    <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button></div>
+    <div class="sublabel" id="trackedLabel">🤖 Auto-tracked (from your searches)</div>
+    <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button><button id="clearTrackedBtn">Clear auto-tracked</button></div>
 
     <hr class="hr">
-    <h3>Auto-fill <span style="color:var(--muted);font-weight:400">— keep your feed fresh</span></h3>
-    <p>When you open RePlay, auto-refresh your topics (newest uploads) at most this many times per day. Costs about <b>one search per topic</b> each time; you have ~100 searches/day.</p>
-    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my topics when I open RePlay</label>
+    <h3>Auto-fill <span style="color:var(--muted);font-weight:400">— keep your feed fresh, cheaply</span></h3>
+    <p>When you open RePlay, pull new uploads from your <b>followed + auto-tracked channels</b> (collected from your searches). This is the <b>cheap</b> path: ~1 unit per channel, not 100 per topic.</p>
+    <label class="switch"><input type="checkbox" id="autoFill"> Auto-update from my channels when I open RePlay</label>
     <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Up to</span><input class="num" id="autoFillPerDay" type="number" min="1" value="5"><span class="lbl" style="min-width:auto">times/day</span></div>
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
 
@@ -311,6 +312,11 @@ data.hiddenChannels = data.hiddenChannels || [];
 const POOL_KEY = 'replay.pool', POOL_MAX = 1000;
 let pool = readJSON(POOL_KEY, []);
 function savePool(){ writeJSON(POOL_KEY, pool); }
+
+// Auto-tracked channels ("fake follow"): collected from search results, checked cheaply.
+const TRACKED_KEY = 'replay.tracked', TRACKED_MAX = 50;
+let tracked = readJSON(TRACKED_KEY, []);
+function saveTracked(){ writeJSON(TRACKED_KEY, tracked); }
 
 function saveData({ touch=true, sync=true } = {}) {
   if (touch) data.updatedAt = Date.now();
@@ -664,7 +670,31 @@ function addToPool(vids) {
   vids.forEach(v => { if (!byId.has(v.id)) { byId.set(v.id, Object.assign(stripVideo(v), { ts: Date.now() })); added++; } });
   pool = Array.from(byId.values()).sort((a,b) => (b.ts||0)-(a.ts||0)).slice(0, POOL_MAX);
   savePool();
+  trackChannels(vids);
   return added;
+}
+
+// Build the auto-tracked channel list from videos we've seen (ranked by frequency).
+function trackChannels(vids) {
+  const hidden = new Set(data.hiddenChannels.map(c => c.id));
+  const followedIds = new Set(data.followed.map(c => c.id));
+  const byId = new Map(tracked.map(c => [c.id, c]));
+  vids.forEach(v => {
+    if (!v.channelId || hidden.has(v.channelId) || followedIds.has(v.channelId)) return;
+    const c = byId.get(v.channelId);
+    if (c) { c.score = (c.score||1) + 1; if (v.channel) c.title = v.channel; }
+    else byId.set(v.channelId, { id:v.channelId, title:v.channel||'', lastVideoId:v.id, score:1, ts:Date.now() });
+  });
+  tracked = Array.from(byId.values()).sort((a,b) => (b.score||0)-(a.score||0)).slice(0, TRACKED_MAX);
+  saveTracked();
+}
+// followed (manual) + tracked (auto), deduped, minus hidden — references to the live objects
+function allTrackedChannels() {
+  const hidden = new Set(data.hiddenChannels.map(c => c.id));
+  const seen = new Set(); const out = [];
+  data.followed.forEach(c => { if (!hidden.has(c.id) && !seen.has(c.id)) { seen.add(c.id); out.push(c); } });
+  tracked.forEach(c => { if (!hidden.has(c.id) && !seen.has(c.id)) { seen.add(c.id); out.push(c); } });
+  return out;
 }
 
 // The free, local feed: pool minus already-watched, filtered by your search terms.
@@ -906,22 +936,43 @@ function renderAutoFill() {
   const af = data.prefs.autoFill || { enabled:false, perDay:5 };
   $('autoFill').checked = !!af.enabled;
   $('autoFillPerDay').value = af.perDay || 5;
-  const t = (data.prefs.topics||[]).length;
-  $('autoFillEst').textContent = t
-    ? `≈ ${t * (af.perDay||5)} searches/day  (${t} topics × ${af.perDay||5}).  You have ~100/day.`
-    : 'Add some topics first — auto-fill refreshes those.';
+  const ch = allTrackedChannels().length;
+  $('autoFillEst').textContent = ch
+    ? `≈ ${ch * (af.perDay||5)} units/day  (${ch} channels × ${af.perDay||5} cheap checks).  Your budget is ~10,000/day.`
+    : 'Do a search first — channels get auto-tracked from your results.';
+  const tl = $('trackedLabel'); if (tl) tl.textContent = `🤖 Auto-tracked (${tracked.length}, from your searches)`;
 }
 $('autoFill').onchange = () => { data.prefs.autoFill.enabled = $('autoFill').checked; touchPrefs(); renderAutoFill(); };
 $('autoFillPerDay').onchange = () => { data.prefs.autoFill.perDay = Math.max(1, +$('autoFillPerDay').value||1); touchPrefs(); renderAutoFill(); };
 function maybeAutoFill() {
   const af = data.prefs.autoFill;
-  if (!af || !af.enabled || !secrets.apiKey || !(data.prefs.topics||[]).length) return;
+  if (!af || !af.enabled || !secrets.apiKey || !allTrackedChannels().length) return;
   const last = +readJSON('replay.autoFillAt', 0);
   const gap = 24*3600e3 / Math.max(1, af.perDay);   // min time between auto-refreshes
   if (Date.now() - last < gap) return;
   writeJSON('replay.autoFillAt', Date.now());
-  if (currentTab==='search') { activeFilters=[]; renderActiveFilters(); }
-  findMore('date'); // newest uploads for your topics → into the pool
+  autoSyncChannels();
+}
+
+// Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
+async function autoSyncChannels() {
+  const chans = allTrackedChannels();
+  if (!chans.length || !secrets.apiKey) return;
+  setLed('checking');
+  const results = await Promise.allSettled(chans.map(async c => {
+    const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${uploadsPlaylist(c.id)}&key=${secrets.apiKey}`;
+    const d = await (await fetch(url)).json();
+    if (d.error) throw new Error(d.error.message);
+    const vids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
+    const idx = vids.indexOf(c.lastVideoId);
+    const fresh = idx === -1 ? vids : vids.slice(0, idx); // ids newer than last seen
+    if (vids[0]) c.lastVideoId = vids[0];
+    return fresh;
+  }));
+  const ids = [];
+  results.forEach(r => { if (r.status === 'fulfilled') ids.push(...r.value); });
+  if (ids.length) { const added = addToPool(await fetchVideos(Array.from(new Set(ids)))); if (currentTab==='search') showFeed(); if (added) toast(`Auto-filled ${added} new video${added>1?'s':''} from your channels.`); }
+  saveData(); saveTracked(); ledNew = []; renderLed();
 }
 
 function renderChannels() {
@@ -1161,6 +1212,7 @@ $('importFile').onchange = async (e) => {
 function refreshAll(){ renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 $('led').onclick = fetchChannelNew;
 $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
+$('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
 
 (async function init(){
   refreshAll();
