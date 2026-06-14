@@ -128,6 +128,11 @@
   .modal.shorts .player { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; overflow:hidden; position:relative; }
   .modal.shorts .frame { width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
   .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
+  #svTrack { display:none; }
+  .modal.shorts #svTrack { display:block; position:absolute; left:0; top:0; width:100%; z-index:2; will-change:transform; }
+  .modal.shorts #iframe { display:none; }
+  .sv-slide { width:100%; height:100dvh; position:relative; background:#000 center/cover no-repeat; }
+  .sv-slide iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
   .modal.shorts #shortMore { display:block; position:absolute; top:14px; left:14px; z-index:6;
     background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; }
   #playerClose { position:fixed; top:14px; right:14px; z-index:70; width:40px; height:40px; border-radius:50%;
@@ -299,6 +304,7 @@
   <button id="playerClose" type="button" title="Close">✕</button>
   <div class="player">
     <div class="frame" id="frame">
+      <div id="svTrack"></div>
       <iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
       <div id="shortSwipe"></div>
       <button id="shortMore" type="button">More ▾</button>
@@ -1238,18 +1244,6 @@ function play(v) {
   openPlayer(v, false);
 }
 let shortPaused = false;
-function ytCmd(func){ const f = $('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
-function toggleShortPause(){ if (shortPaused) { ytCmd('playVideo'); shortPaused = false; } else { ytCmd('pauseVideo'); shortPaused = true; } }
-function prefetchShorts(){ // best-effort preload of the next/prev short
-  document.querySelectorAll('link.short-prefetch').forEach(l => l.remove());
-  const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
-  [shortsIndex+1, shortsIndex-1].forEach(i => {
-    const v = shortsQueue[i]; if (!v) return;
-    const l = document.createElement('link'); l.className = 'short-prefetch'; l.rel = 'prefetch'; l.as = 'document';
-    l.href = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=0${origin}`;
-    document.head.appendChild(l);
-  });
-}
 function buildShortsQueue(v) {
   let src = currentTab === 'search' ? lastResults
     : ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
@@ -1257,7 +1251,78 @@ function buildShortsQueue(v) {
   shortsQueue = shorts.length ? shorts : [v];
   shortsIndex = Math.max(0, shortsQueue.findIndex(x => x.id === v.id));
 }
-// openPlayer(v, restore, replace): replace=true updates history in place (used when swiping shorts)
+// Fill the player meta (channel, description, related, action buttons) for a video.
+function fillMeta(v) {
+  $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
+  $('ptitle').textContent = v.title;
+  const chLink = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
+  $('pchannel').innerHTML = chLink + (v.publishedAt ? ` · ${escapeHtml(timeAgo(v.publishedAt))}` : '');
+  const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
+  const desc = v.description || '';
+  $('pdesc').textContent = desc; $('pdesc').style.display = desc ? '' : 'none'; $('pdesc').classList.add('collapsed'); $('descToggle').textContent = 'Show more';
+  requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
+  renderRelated(v);
+  syncPlayerButtons();
+}
+
+/* ====================== SHORTS CAROUSEL (drag-to-follow, preloaded) ====================== */
+let svSlides = [];
+const svH = () => $('frame').clientHeight || window.innerHeight;
+function svIframe(v, autoplay) {
+  const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
+  const ifr = document.createElement('iframe');
+  ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
+  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=0&enablejsapi=1&autoplay=${autoplay?1:0}${origin}`;
+  return ifr;
+}
+function svFill(slide, v, autoplay) {
+  slide._vid = v ? v.id : null; slide.innerHTML = '';
+  slide.style.backgroundImage = v ? `url(${v.thumb})` : '';
+  if (v) slide.appendChild(svIframe(v, autoplay));
+}
+function svCmd(slide, func) { const f = slide && slide.querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
+function svSetTransition(on) { $('svTrack').style.transition = on ? 'transform .28s ease' : 'none'; }
+function svMove(px) { $('svTrack').style.transform = `translateY(${px}px)`; }
+function buildCarousel() {
+  const track = $('svTrack'); track.innerHTML = '';
+  svSlides = [0,1,2].map(() => { const s = document.createElement('div'); s.className = 'sv-slide'; track.appendChild(s); return s; });
+  svFill(svSlides[0], shortsQueue[shortsIndex-1], false);
+  svFill(svSlides[1], shortsQueue[shortsIndex], true);   // current: preloaded + autoplay
+  svFill(svSlides[2], shortsQueue[shortsIndex+1], false); // next: preloaded, paused
+  svSetTransition(false); svMove(-svH());
+  shortPaused = false;
+}
+function destroyCarousel() { const t = $('svTrack'); if (t) t.innerHTML = ''; svSlides = []; }
+function svTogglePause() { const cur = svSlides[1]; if (!cur) return; if (shortPaused) { svCmd(cur,'playVideo'); shortPaused = false; } else { svCmd(cur,'pauseVideo'); shortPaused = true; } }
+function svSettle() { svSetTransition(true); svMove(-svH()); }
+let svAnimating = false;
+function svGo(dir) {
+  if (svAnimating) return;
+  if (dir>0 && shortsIndex+1 >= shortsQueue.length) return svSettle();
+  if (dir<0 && shortsIndex-1 < 0) return svSettle();
+  if (budgetLocked('shorts')) { renderBudgets(); toast(`Shorts limit reached — back in ${fmtCountdown(budgetUnlockMs('shorts'))} 🌙`); return svSettle(); }
+  svAnimating = true;
+  const track = $('svTrack');
+  let finished = false;
+  const done = () => {
+    if (finished) return; finished = true;
+    track.removeEventListener('transitionend', done);
+    shortsIndex += dir;
+    if (dir>0) { const a = svSlides.shift(); svSlides.push(a); track.appendChild(a); svFill(a, shortsQueue[shortsIndex+1], false); }
+    else       { const c = svSlides.pop();   svSlides.unshift(c); track.insertBefore(c, track.firstChild); svFill(c, shortsQueue[shortsIndex-1], false); }
+    svSetTransition(false); svMove(-svH());                       // recentre on the new current (no reload of it)
+    svCmd(svSlides[1],'playVideo'); svCmd(svSlides[0],'pauseVideo'); svCmd(svSlides[2],'pauseVideo');
+    shortPaused = false;
+    const v = shortsQueue[shortsIndex];
+    playing = v; budgetRecord('shorts'); addHistory(v); renderBudgets(); fillMeta(v); history.replaceState(navSnapshot(), '');
+    svAnimating = false;
+  };
+  svSetTransition(true);
+  svMove(dir>0 ? -2*svH() : 0); // slide to the preloaded neighbour
+  track.addEventListener('transitionend', done, { once:true });
+  setTimeout(done, 420); // fallback if transitionend doesn't fire
+}
+
 function openPlayer(v, restore, replace) {
   const bucket = v.isShort ? 'shorts' : 'videos';
   if (!restore) {
@@ -1266,54 +1331,33 @@ function openPlayer(v, restore, replace) {
       toast(`${bucket==='shorts'?'Shorts':'Videos'} limit reached — back in ${fmtCountdown(budgetUnlockMs(bucket))} 🌙`);
       return;
     }
-    budgetRecord(bucket);
-    addHistory(v);          // saves + budget state persisted together
-    renderBudgets();
+    budgetRecord(bucket); addHistory(v); renderBudgets();
   }
   playing = v;
-  // Recreate the iframe each time (src set before insert) so the YT player never pollutes Back history.
-  const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
-  const frame = $('frame');
-  frame.style.backgroundImage = `url(${v.thumb})`; // show thumbnail under the loading player (smoother)
-  const old = $('iframe'); if (old) old.remove();
-  const ifr = document.createElement('iframe');
-  ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
-  ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s';
-  ifr.onload = () => { ifr.style.opacity = '1'; };
-  const sParams = v.isShort ? `&controls=0&enablejsapi=1` : ''; // shorts: no controls bar, no playlist (no ◀); enablejsapi → tap-to-pause
-  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${sParams}${origin}`;
-  frame.insertBefore(ifr, frame.firstChild);
-  $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
-  $('ptitle').textContent = v.title;
-  const chLink = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
-  $('pchannel').innerHTML = chLink + (v.publishedAt ? ` · ${escapeHtml(timeAgo(v.publishedAt))}` : '');
-  const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
-  const desc = v.description || '';
-  $('pdesc').textContent = desc;
-  $('pdesc').style.display = desc ? '' : 'none';
-  $('pdesc').classList.add('collapsed');
-  $('descToggle').textContent = 'Show more';
-  requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
-  renderRelated(v);
-  syncPlayerButtons();
-  // Shorts: fullscreen; controls hidden; tap = pause, swipe = next/prev.
+  fillMeta(v);
   $('modal').classList.toggle('shorts', !!v.isShort);
   $('modal').classList.remove('sheet-open');
   $('playerDetails').style.display = '';
+  if (v.isShort) {
+    const old = $('iframe'); if (old) old.src = '';        // stop the normal player
+    if (!shortsQueue.length || (shortsQueue[shortsIndex] && shortsQueue[shortsIndex].id !== v.id)) buildShortsQueue(v);
+    buildCarousel();
+  } else {
+    destroyCarousel();
+    const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
+    const frame = $('frame'); frame.style.backgroundImage = `url(${v.thumb})`;
+    const old = $('iframe'); if (old) old.remove();
+    const ifr = document.createElement('iframe');
+    ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
+    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s'; ifr.onload = () => { ifr.style.opacity = '1'; };
+    ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
+    frame.insertBefore(ifr, frame.firstChild);
+  }
   $('modal').classList.add('open');
-  if (v.isShort) { shortPaused = false; const fr = $('frame'); fr.classList.remove('anim'); void fr.offsetWidth; fr.classList.add('anim'); prefetchShorts(); }
+  if (v.isShort) requestAnimationFrame(() => { svSetTransition(false); svMove(-svH()); }); // recentre once laid out
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (replace) history.replaceState(navSnapshot(), '');
-  else if (!restore) pushNav();  // opening a video is a back-able step
-}
-// Move to the next/previous short in the queue (Back still returns to the feed, not per-short).
-function shortStep(dir) {
-  if (!playing || !playing.isShort) return;
-  const i = shortsIndex + dir;
-  if (i < 0 || i >= shortsQueue.length) { toast(dir>0 ? 'No more shorts here.' : 'Start of the list.'); return; }
-  if (budgetLocked('shorts')) { renderBudgets(); toast(`Shorts limit reached — back in ${fmtCountdown(budgetUnlockMs('shorts'))} 🌙`); return; }
-  shortsIndex = i;
-  openPlayer(shortsQueue[i], false, true);
+  else if (!restore) pushNav();
 }
 // Related videos pulled from your own pool (free, no API).
 function renderRelated(v) {
@@ -1353,7 +1397,7 @@ $('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isF
 $('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
 $('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
 $('descToggle').onclick = () => { const collapsed = $('pdesc').classList.toggle('collapsed'); $('descToggle').textContent = collapsed ? 'Show more' : 'Show less'; };
-function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-open'); const i=$('iframe'); if(i) i.remove(); }
+function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-open'); const i=$('iframe'); if(i) i.remove(); destroyCarousel(); }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
 $('shortMore').onclick = (e) => { e.stopPropagation(); $('modal').classList.toggle('sheet-open'); };
@@ -1362,28 +1406,35 @@ document.addEventListener('keydown', e => {
   if (!$('modal').classList.contains('open')) return;
   if (e.key==='Escape') { history.back(); return; }
   if ($('modal').classList.contains('shorts')) {
-    if (e.key==='ArrowDown') { e.preventDefault(); shortStep(1); }
-    else if (e.key==='ArrowUp') { e.preventDefault(); shortStep(-1); }
-    else if (e.key===' ') { e.preventDefault(); toggleShortPause(); }
+    if (e.key==='ArrowDown') { e.preventDefault(); svGo(1); }
+    else if (e.key==='ArrowUp') { e.preventDefault(); svGo(-1); }
+    else if (e.key===' ') { e.preventDefault(); svTogglePause(); }
   }
 });
-// Shorts: swipe/scroll over the video → next/prev; tap → pause/resume.
-let shortWheelLock = false;
+// Shorts: drag the video with your finger; release to snap to the next/prev. Tap = pause.
+let dragY = null, dragMoved = false, lastTouchAt = 0;
+$('shortSwipe').addEventListener('touchstart', e => { dragY = e.touches[0].clientY; dragMoved = false; svSetTransition(false); }, { passive:true });
+$('shortSwipe').addEventListener('touchmove', e => {
+  if (dragY == null) return;
+  let dy = e.touches[0].clientY - dragY;
+  if (Math.abs(dy) > 8) dragMoved = true;
+  if ((shortsIndex===0 && dy>0) || (shortsIndex>=shortsQueue.length-1 && dy<0)) dy *= 0.3; // resistance at ends
+  svMove(-svH() + dy);
+}, { passive:true });
+$('shortSwipe').addEventListener('touchend', e => {
+  if (dragY == null) return;
+  const dy = e.changedTouches[0].clientY - dragY; dragY = null; lastTouchAt = Date.now();
+  if (!dragMoved) { svTogglePause(); return; }               // tap → pause
+  const TH = Math.min(110, svH() * 0.16);
+  if (dy < -TH) svGo(1); else if (dy > TH) svGo(-1); else svSettle();
+});
+let svWheelLock = false;
 $('shortSwipe').addEventListener('wheel', e => {
   e.preventDefault();
-  if (shortWheelLock) return; shortWheelLock = true; setTimeout(() => shortWheelLock = false, 500);
-  shortStep(e.deltaY > 0 ? 1 : -1);
+  if (svWheelLock) return; svWheelLock = true; setTimeout(() => svWheelLock = false, 450);
+  svGo(e.deltaY > 0 ? 1 : -1);
 }, { passive:false });
-let touchStartY = null, touchStartX = null, lastTouchAt = 0;
-$('shortSwipe').addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; touchStartX = e.touches[0].clientX; }, { passive:true });
-$('shortSwipe').addEventListener('touchend', e => {
-  if (touchStartY == null) return;
-  const dy = e.changedTouches[0].clientY - touchStartY, dx = e.changedTouches[0].clientX - touchStartX;
-  touchStartY = touchStartX = null; lastTouchAt = Date.now();
-  if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx)) shortStep(dy < 0 ? 1 : -1); // vertical swipe
-  else if (Math.abs(dy) < 12 && Math.abs(dx) < 12) toggleShortPause();              // tap → pause/resume
-});
-$('shortSwipe').addEventListener('click', () => { if (Date.now() - lastTouchAt > 500) toggleShortPause(); }); // desktop click
+$('shortSwipe').addEventListener('click', () => { if (Date.now() - lastTouchAt > 500) svTogglePause(); }); // desktop click = pause
 $('closePanel').onclick = () => history.back();
 
 /* ============================== HISTORY / BACK BUTTON ============================== */
