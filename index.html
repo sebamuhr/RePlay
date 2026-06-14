@@ -119,9 +119,12 @@
   /* topics */
   .topic { background:#0d1a12; border:1px solid #1f3a26; color:#9ae6b4; padding:5px 10px; border-radius:999px; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
   .topic .x { cursor:pointer; }
-  .suggest { background:var(--card); border:1px dashed #333; color:var(--muted); padding:5px 10px; border-radius:999px; font-size:13px; cursor:pointer; }
-  .suggest:hover { color:var(--fg); border-color:#555; }
+  .suggest { background:var(--card); border:1px dashed #333; color:var(--muted); padding:5px 10px; border-radius:999px; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
+  .suggest .t { }
+  .suggest .like, .suggest .dislike { cursor:pointer; filter:grayscale(.4); }
+  .suggest .like:hover, .suggest .dislike:hover { filter:none; }
   .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
+  .sublabel { font-size:12px; color:var(--muted); margin:12px 0 4px; }
 
   /* home sub-tabs (Videos / Shorts) */
   .subtabs { max-width:1100px; margin:10px auto 0; display:flex; gap:6px; }
@@ -164,11 +167,15 @@
     <div class="row"><input id="apiKey" type="text" class="secret" placeholder="Paste YouTube API key" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button id="saveKey">Save</button></div>
 
     <hr class="hr">
-    <h3>Topics <span style="color:var(--muted);font-weight:400">— fill your Home &amp; Shorts feeds (no algorithm)</span></h3>
-    <p>Pick topics you like. Your Home and Shorts tabs fill only with these.</p>
+    <h3>Topics <span style="color:var(--muted);font-weight:400">— 👍 fill your feeds · 👎 hide from RePlay</span></h3>
+    <p>Like a topic to fill Home &amp; Shorts, or dislike it to hide it everywhere. A topic can only be in one list.</p>
+    <div class="sublabel">👍 Liked (fill your feeds)</div>
     <div class="blocklist" id="topicList"></div>
-    <div class="row" style="margin-top:8px"><input id="newTopic" type="text" placeholder="Add a custom topic"><button id="addTopic">Add</button></div>
-    <div class="blocklist" id="topicPicker" style="margin-top:8px"></div>
+    <div class="sublabel">👎 Disliked (hidden everywhere)</div>
+    <div class="blocklist" id="dislikeList"></div>
+    <div class="row" style="margin-top:10px"><input id="newTopic" type="text" placeholder="Type a topic…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"><button id="likeTopic">👍 Like</button><button id="dislikeTopic">👎 Dislike</button></div>
+    <div class="sublabel">Suggestions</div>
+    <div class="blocklist" id="topicPicker"></div>
 
     <hr class="hr">
     <h3>Shorts</h3>
@@ -177,12 +184,6 @@
 
     <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
     <div id="budgetPrefs"></div>
-
-    <hr class="hr">
-    <h3>Blocked words</h3>
-    <p>Hide any video whose title, description, tags or channel contains one of these. Case-insensitive.</p>
-    <div class="row"><input id="newBlock" type="text" placeholder="e.g. football"><button id="addBlock">Block</button></div>
-    <div class="blocklist" id="blocklist"></div>
 
     <hr class="hr">
     <h3>Sync across devices (GitHub) <span id="syncState"></span></h3>
@@ -370,58 +371,67 @@ function renderBudgetPrefs() {
   });
 }
 
-function renderBlocks() {
-  const wrap = $('blocklist'); wrap.innerHTML = '';
-  if (!data.blocks.length) { wrap.innerHTML = '<span style="color:var(--muted);font-size:13px">No blocked words yet.</span>'; return; }
-  data.blocks.forEach(w => {
-    const el = document.createElement('span');
-    el.className = 'blockword';
-    el.innerHTML = `${escapeHtml(w)} <span class="x">✕</span>`;
-    el.querySelector('.x').onclick = () => { data.blocks = data.blocks.filter(b=>b!==w); data.blocksUpdatedAt = Date.now(); saveData(); renderBlocks(); rerenderFilter(); };
-    wrap.appendChild(el);
-  });
-}
-function addBlock(word) {
-  word = (word||'').trim().toLowerCase();
-  if (!word || data.blocks.includes(word)) return;
-  data.blocks.push(word); data.blocksUpdatedAt = Date.now(); saveData(); renderBlocks(); rerenderFilter();
-}
-$('addBlock').onclick = () => { addBlock($('newBlock').value); $('newBlock').value=''; };
-$('newBlock').addEventListener('keydown', e => { if (e.key==='Enter') $('addBlock').click(); });
-
 /* ============================== TOPICS ============================== */
 const PREDEFINED_TOPICS = ['Music','Live music','Cooking','Baking','Science','Space','Astronomy','History','Technology','Programming','AI','Travel','Nature','Wildlife','Fitness','Yoga','Gaming','Art','Drawing','Photography','DIY','Woodworking','Cars','Motorsport','Finance','Investing','Languages','Philosophy','Psychology','Documentaries','Comedy','Stand-up','Podcasts','News','Chess','Gardening','Meditation','Books','Movies','Animation','Electronics','3D printing','Hiking','Fishing','Architecture','Design'];
 
+const has = (arr, t) => (arr||[]).some(x => x.toLowerCase() === t.toLowerCase());
+const without = (arr, t) => (arr||[]).filter(x => x.toLowerCase() !== t.toLowerCase());
+
 function renderTopics() {
-  const chosen = data.prefs.topics || [];
+  const liked = data.prefs.topics || [];
   const list = $('topicList'); list.innerHTML = '';
-  if (!chosen.length) list.innerHTML = '<span style="color:var(--muted);font-size:13px">No topics yet — pick some below.</span>';
-  chosen.forEach(t => {
+  if (!liked.length) list.innerHTML = '<span style="color:var(--muted);font-size:13px">No liked topics yet — pick some below.</span>';
+  liked.forEach(t => {
     const el = document.createElement('span'); el.className = 'topic';
     el.innerHTML = `${escapeHtml(t)} <span class="x">✕</span>`;
     el.querySelector('.x').onclick = () => removeTopic(t);
     list.appendChild(el);
   });
   const picker = $('topicPicker'); picker.innerHTML = '';
-  PREDEFINED_TOPICS.filter(t => !chosen.some(c => c.toLowerCase()===t.toLowerCase())).forEach(t => {
-    const el = document.createElement('span'); el.className = 'suggest'; el.textContent = '+ ' + t;
-    el.onclick = () => addTopic(t);
+  const inUse = new Set([...(liked), ...(data.blocks||[])].map(s => s.toLowerCase()));
+  PREDEFINED_TOPICS.filter(t => !inUse.has(t.toLowerCase())).forEach(t => {
+    const el = document.createElement('span'); el.className = 'suggest';
+    el.innerHTML = `<span class="t">${escapeHtml(t)}</span> <span class="like" title="Like">👍</span> <span class="dislike" title="Dislike">👎</span>`;
+    el.querySelector('.like').onclick = () => addTopic(t);
+    el.querySelector('.dislike').onclick = () => addDislike(t);
     picker.appendChild(el);
+  });
+}
+function renderDislikes() {
+  const wrap = $('dislikeList'); wrap.innerHTML = '';
+  if (!data.blocks.length) { wrap.innerHTML = '<span style="color:var(--muted);font-size:13px">Nothing disliked yet.</span>'; return; }
+  data.blocks.forEach(w => {
+    const el = document.createElement('span'); el.className = 'blockword';
+    el.innerHTML = `${escapeHtml(w)} <span class="x">✕</span>`;
+    el.querySelector('.x').onclick = () => removeDislike(w);
+    wrap.appendChild(el);
   });
 }
 function addTopic(t) {
   t = (t||'').trim(); if (!t) return;
-  const list = data.prefs.topics || (data.prefs.topics = []);
-  if (list.some(x => x.toLowerCase()===t.toLowerCase())) return;
-  list.push(t); touchPrefs(); invalidateFeeds(); renderTopics(); renderSuggestions();
+  if (has(data.blocks, t)) { data.blocks = without(data.blocks, t); data.blocksUpdatedAt = Date.now(); } // move out of disliked
+  if (!has(data.prefs.topics, t)) (data.prefs.topics || (data.prefs.topics=[])).push(t);
+  touchPrefs(); invalidateFeeds(); afterTopicChange();
 }
 function removeTopic(t) {
-  data.prefs.topics = (data.prefs.topics||[]).filter(x => x !== t);
-  touchPrefs(); invalidateFeeds(); renderTopics(); renderSuggestions();
+  data.prefs.topics = without(data.prefs.topics, t);
+  touchPrefs(); invalidateFeeds(); afterTopicChange();
 }
-function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); }
-$('addTopic').onclick = () => { addTopic($('newTopic').value); $('newTopic').value=''; };
-$('newTopic').addEventListener('keydown', e => { if (e.key==='Enter') $('addTopic').click(); });
+function addDislike(t) {
+  t = (t||'').trim().toLowerCase(); if (!t) return;
+  if (has(data.prefs.topics, t)) { data.prefs.topics = without(data.prefs.topics, t); invalidateFeeds(); } // move out of liked
+  if (!has(data.blocks, t)) data.blocks.push(t);
+  data.blocksUpdatedAt = Date.now(); touchPrefs(); afterTopicChange();
+}
+function removeDislike(w) {
+  data.blocks = without(data.blocks, w);
+  data.blocksUpdatedAt = Date.now(); saveData(); afterTopicChange();
+}
+function afterTopicChange() { renderTopics(); renderDislikes(); renderSuggestions(); rerenderFilter(); }
+function invalidateFeeds() { localStorage.removeItem('replay.home'); localStorage.removeItem('replay.shorts'); lastResultsQuery = null; }
+$('likeTopic').onclick = () => { addTopic($('newTopic').value); $('newTopic').value=''; };
+$('dislikeTopic').onclick = () => { addDislike($('newTopic').value); $('newTopic').value=''; };
+$('newTopic').addEventListener('keydown', e => { if (e.key==='Enter') $('likeTopic').click(); });
 
 /* ============================== RECENT SEARCHES (History tab) ============================== */
 function renderRecentSearches() {
@@ -784,7 +794,7 @@ function syncPlayerButtons() {
 }
 $('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
 $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
-$('pBlock').onclick = () => { if(!playing) return; const ch = playing.channel; addBlock(ch.toLowerCase()); history.back(); toast(`Hiding “${ch}” from now on.`); };
+$('pBlock').onclick = () => { if(!playing) return; const ch = playing.channel; addDislike(ch); history.back(); toast(`Hiding “${ch}” from now on.`); };
 function closePlayerUI(){ $('modal').classList.remove('open'); $('iframe').src=''; }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
@@ -888,7 +898,7 @@ async function pushSync() {
 }
 // Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
 function softRefresh() {
-  renderBlocks(); renderTopics(); renderBudgets(); renderBudgetPrefs();
+  renderDislikes(); renderTopics(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
@@ -937,7 +947,7 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderBlocks(); renderTopics(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ renderDislikes(); renderTopics(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
 
 (async function init(){
   refreshAll();
