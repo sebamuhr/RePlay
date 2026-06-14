@@ -116,6 +116,8 @@
   .pchannel { color:var(--muted); font-size:13px; margin-top:10px; }
   .pdesc { white-space:pre-wrap; word-break:break-word; color:#d6d6d6; font-size:13px; line-height:1.55; margin-top:10px; border-top:1px solid var(--line); padding-top:12px; }
   .pdesc a { color:var(--blue); }
+  .pdesc.collapsed { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .desc-toggle { background:transparent; border:0; color:var(--blue); padding:6px 0; font-size:13px; cursor:pointer; }
   .related { margin-top:16px; }
   .related h4 { font-size:13px; color:var(--muted); margin:0 0 10px; }
   .related-grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
@@ -277,7 +279,8 @@
       </div>
     </div>
     <div class="pchannel" id="pchannel"></div>
-    <div class="pdesc" id="pdesc"></div>
+    <div class="pdesc collapsed" id="pdesc"></div>
+    <button class="desc-toggle" id="descToggle" type="button">Show more</button>
     <div class="related" id="related"></div>
   </div>
 </div>
@@ -1112,7 +1115,12 @@ function openPlayer(v, restore) {
   $('ptitle').textContent = v.title;
   $('pchannel').innerHTML = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
   const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
-  $('pdesc').textContent = v.description || '';
+  const desc = v.description || '';
+  $('pdesc').textContent = desc;
+  $('pdesc').style.display = desc ? '' : 'none';
+  $('pdesc').classList.add('collapsed');
+  $('descToggle').textContent = 'Show more';
+  requestAnimationFrame(() => { const p = $('pdesc'); $('descToggle').style.display = (desc && p.scrollHeight - p.clientHeight > 4) ? '' : 'none'; });
   renderRelated(v);
   syncPlayerButtons();
   $('modal').classList.add('open');
@@ -1156,6 +1164,7 @@ $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(
 $('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isFollowed(playing.channelId)) unfollowChannel(playing.channelId); else followChannel(playing); syncPlayerButtons(); };
 $('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
 $('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
+$('descToggle').onclick = () => { const collapsed = $('pdesc').classList.toggle('collapsed'); $('descToggle').textContent = collapsed ? 'Show more' : 'Show less'; };
 function closePlayerUI(){ $('modal').classList.remove('open'); $('iframe').src=''; }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
