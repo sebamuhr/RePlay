@@ -73,6 +73,8 @@
   .actions { display:flex; gap:6px; flex-wrap:wrap; }
   .actions button { padding:6px 9px; font-size:12px; border-radius:8px; }
   .actions button.on { color:var(--good); border-color:#1f3a26; }
+  .actions button.remove { color:#ff9a9a; border-color:#3a1d1d; }
+  .actions button.remove:hover { border-color:var(--accent); }
 
   /* settings panel */
   .panel { display:none; max-width:1100px; margin:12px auto 0; background:var(--card);
@@ -213,6 +215,7 @@ function defaultData() {
       updatedAt: 0,
     },
     budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
+    deleted: { history:{}, watchLater:{}, favorites:{} }, // id -> deletedAt (tombstones)
     updatedAt: 0,
   };
 }
@@ -225,6 +228,7 @@ let data = Object.assign(defaultData(), readJSON(DATA_KEY, {}));
 data.prefs = Object.assign(defaultData().prefs, data.prefs||{});
 data.prefs.budgets = Object.assign(defaultData().prefs.budgets, data.prefs.budgets||{});
 data.budgetState = Object.assign(defaultData().budgetState, data.budgetState||{});
+data.deleted = Object.assign(defaultData().deleted, data.deleted||{});
 
 function saveData({ touch=true, sync=true } = {}) {
   if (touch) data.updatedAt = Date.now();
@@ -451,13 +455,23 @@ function card(v) {
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
+        ${currentTab!=='search' ? '<button class="remove">✕ Remove</button>' : ''}
       </div>
     </div>`;
   el.querySelector('.thumb').onclick = () => play(v);
   el.querySelector('.title').onclick = () => play(v);
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
+  const rm = el.querySelector('.remove');
+  if (rm) rm.onclick = (e) => { e.stopPropagation(); removeFromList(TAB_LIST[currentTab], v.id); };
   return el;
+}
+const TAB_LIST = { history:'history', later:'watchLater', favorites:'favorites' };
+function removeFromList(listName, id) {
+  data[listName] = data[listName].filter(x => x.id !== id);
+  data.deleted[listName][id] = Date.now();  // tombstone so sync won't resurrect it
+  saveData();
+  renderTab();
 }
 
 /* ============================== LISTS ============================== */
@@ -465,7 +479,8 @@ function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,descript
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
-  if (i>=0) list.splice(i,1); else list.unshift(Object.assign(stripVideo(v),{ts:Date.now()}));
+  if (i>=0) { list.splice(i,1); data.deleted[listName][v.id] = Date.now(); }
+  else { list.unshift(Object.assign(stripVideo(v),{ts:Date.now()})); delete data.deleted[listName][v.id]; }
   saveData();
   if (currentTab==='search') rerenderFilter(); else renderTab();
 }
@@ -473,6 +488,7 @@ function addHistory(v) {
   data.history = data.history.filter(x=>x.id!==v.id);
   data.history.unshift(Object.assign(stripVideo(v),{ts:Date.now()}));
   data.history = data.history.slice(0,2000);
+  delete data.deleted.history[v.id];  // re-watching un-deletes it
   saveData();
 }
 
@@ -534,10 +550,21 @@ function ghHeaders(){ return { 'Authorization':'Bearer '+secrets.ghToken, 'Accep
 function ghHint(s){ return (s===404||s===401||s===403) ? ' — use a CLASSIC token (github.com/settings/tokens → “Tokens (classic)”) with the “gist” scope ticked. Fine-grained tokens do not work for Gists.' : ''; }
 
 function unionArr(a,b){ return Array.from(new Set([...(a||[]),...(b||[])])); }
-function mergeById(a,b){
+function mergeById(a,b,tomb){
   const m = new Map();
   [...(a||[]),...(b||[])].forEach(it => { const ex=m.get(it.id); if(!ex || (it.ts||0)>(ex.ts||0)) m.set(it.id,it); });
-  return Array.from(m.values()).sort((x,y)=>(y.ts||0)-(x.ts||0));
+  let arr = Array.from(m.values());
+  if (tomb) arr = arr.filter(it => !(tomb[it.id] != null && tomb[it.id] >= (it.ts||0))); // drop items deleted after they were added
+  return arr.sort((x,y)=>(y.ts||0)-(x.ts||0));
+}
+function mergeTomb(a,b){
+  const out={};
+  ['history','watchLater','favorites'].forEach(k=>{
+    const m={...(a?.[k]||{})};
+    Object.entries(b?.[k]||{}).forEach(([id,ts])=>{ if(m[id]==null || ts>m[id]) m[id]=ts; });
+    out[k]=m;
+  });
+  return out;
 }
 function mergeBudget(a,b){
   const out={};
@@ -549,9 +576,10 @@ function mergeData(local, remote) {
   const m = defaultData();
   m.blocks = unionArr(local.blocks, remote.blocks);
   m.savedSearches = unionArr(local.savedSearches, remote.savedSearches).slice(0,12);
-  m.history = mergeById(local.history, remote.history).slice(0,2000);
-  m.watchLater = mergeById(local.watchLater, remote.watchLater);
-  m.favorites = mergeById(local.favorites, remote.favorites);
+  m.deleted = mergeTomb(local.deleted, remote.deleted);
+  m.history = mergeById(local.history, remote.history, m.deleted.history).slice(0,2000);
+  m.watchLater = mergeById(local.watchLater, remote.watchLater, m.deleted.watchLater);
+  m.favorites = mergeById(local.favorites, remote.favorites, m.deleted.favorites);
   m.prefs = (remote.prefs?.updatedAt||0) > (local.prefs?.updatedAt||0) ? remote.prefs : local.prefs;
   m.budgetState = mergeBudget(local.budgetState, remote.budgetState);
   m.updatedAt = Math.max(local.updatedAt||0, remote.updatedAt||0);
