@@ -229,7 +229,9 @@ const DATA_KEY = 'replay.data';
 function defaultData() {
   return {
     blocks: [],
+    blocksUpdatedAt: 0,
     savedSearches: [],
+    savedSearchesUpdatedAt: 0,
     history: [],          // [{...video, ts}]
     watchLater: [],
     favorites: [],
@@ -243,7 +245,7 @@ function defaultData() {
       updatedAt: 0,
     },
     budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
-    deleted: { history:{}, watchLater:{}, favorites:{}, searches:{}, blocks:{} }, // key -> deletedAt (tombstones)
+    deleted: { history:{}, watchLater:{}, favorites:{} }, // tombstones for by-id lists
     updatedAt: 0,
   };
 }
@@ -373,14 +375,14 @@ function renderBlocks() {
     const el = document.createElement('span');
     el.className = 'blockword';
     el.innerHTML = `${escapeHtml(w)} <span class="x">✕</span>`;
-    el.querySelector('.x').onclick = () => { data.blocks = data.blocks.filter(b=>b!==w); data.deleted.blocks[w]=Date.now(); saveData(); renderBlocks(); rerenderFilter(); };
+    el.querySelector('.x').onclick = () => { data.blocks = data.blocks.filter(b=>b!==w); data.blocksUpdatedAt = Date.now(); saveData(); renderBlocks(); rerenderFilter(); };
     wrap.appendChild(el);
   });
 }
 function addBlock(word) {
   word = (word||'').trim().toLowerCase();
   if (!word || data.blocks.includes(word)) return;
-  data.blocks.push(word); delete data.deleted.blocks[word]; saveData(); renderBlocks(); rerenderFilter();
+  data.blocks.push(word); data.blocksUpdatedAt = Date.now(); saveData(); renderBlocks(); rerenderFilter();
 }
 $('addBlock').onclick = () => { addBlock($('newBlock').value); $('newBlock').value=''; };
 $('newBlock').addEventListener('keydown', e => { if (e.key==='Enter') $('addBlock').click(); });
@@ -428,14 +430,14 @@ function renderRecentSearches() {
     const el = document.createElement('span'); el.className = 'chip';
     el.innerHTML = `<span class="t">🔎 ${escapeHtml(s)}</span> <span class="x">✕</span>`;
     el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); setTab('search'); };
-    el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.deleted.searches[s]=Date.now(); saveData(); renderRecentSearches(); };
+    el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.savedSearchesUpdatedAt = Date.now(); saveData(); renderRecentSearches(); };
     wrap.appendChild(el);
   });
 }
 function rememberSearch(q) {
   if (!q) return;
   data.savedSearches = [q, ...data.savedSearches.filter(x=>x!==q)].slice(0,20);
-  delete data.deleted.searches[q];
+  data.savedSearchesUpdatedAt = Date.now();
   saveData();
 }
 
@@ -483,11 +485,11 @@ $('q').addEventListener('keydown', e => { if (e.key==='Enter') { addFilter($('q'
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
-async function searchIds(query, max) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=${max}&q=${encodeURIComponent(query)}&key=${secrets.apiKey}`;
+async function searchPage(query, pageToken) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(query)}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
   const d = await (await fetch(url)).json();
   if (d.error) throw new Error(d.error.message || 'API error');
-  return (d.items||[]).map(i => i.id.videoId).filter(Boolean);
+  return { ids: (d.items||[]).map(i => i.id.videoId).filter(Boolean), next: d.nextPageToken || null };
 }
 async function fetchVideos(ids) {
   const out = [];
@@ -507,15 +509,17 @@ async function fetchVideos(ids) {
   return out;
 }
 
+let pageState = null; // { mode:'search'|'home', query?, topics?, token?, tokens? }
+
 async function runFilterSearch() {
   if (!activeFilters.length) return loadHome();
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
   const query = activeFilters.join(' ');
   flash('Filtering…'); $('grid').innerHTML=''; $('empty').textContent='';
   try {
-    const ids = await searchIds(query, 25);
-    if (!ids.length) { lastResults=[]; flash(''); $('empty').textContent='No videos match those filters.'; return; }
-    lastResults = await fetchVideos(ids);
+    const { ids, next } = await searchPage(query, null);
+    lastResults = ids.length ? await fetchVideos(ids) : [];
+    pageState = { mode:'search', query, token: next };
     rememberSearch(query);
     rerenderFilter();
   } catch (err) { flash('Error: ' + err.message); }
@@ -524,21 +528,53 @@ async function runFilterSearch() {
 async function loadHome(force=false) {
   if (currentTab !== 'search') return;
   const topics = data.prefs.topics || [];
-  if (!topics.length) { lastResults=[]; $('grid').innerHTML=''; flash(''); $('empty').textContent='Add topics in ⚙ Preferences to fill your Home feed — or type a filter above.'; return; }
+  if (!topics.length) { lastResults=[]; pageState=null; $('grid').innerHTML=''; flash(''); $('empty').textContent='Add topics in ⚙ Preferences to fill your Home feed — or type a filter above.'; return; }
   if (!secrets.apiKey) { $('panel').classList.add('open'); flash(''); $('empty').textContent='Add your YouTube API key in ⚙ to load your feed.'; return; }
   const key = topics.slice().sort().join('|');
   const cache = readJSON('replay.home', null);
-  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) { lastResults = cache.items; rerenderFilter(); return; }
+  if (!force && cache && cache.key===key && Date.now()-cache.ts < 6*3600e3) {
+    lastResults = cache.items; pageState = { mode:'home', topics, tokens: cache.tokens||{} }; rerenderFilter(); return;
+  }
   flash('Loading your topics…'); $('grid').innerHTML=''; $('empty').textContent='';
   try {
-    let ids = [];
-    for (const t of topics) ids.push(...await searchIds(t, 10));
+    let ids = []; const tokens = {};
+    for (const t of topics) { const { ids:tids, next } = await searchPage(t, null); ids.push(...tids); tokens[t] = next; }
     ids = Array.from(new Set(ids));
     const items = shuffle(await fetchVideos(ids));
     lastResults = items;
-    writeJSON('replay.home', { ts:Date.now(), key, items });
+    pageState = { mode:'home', topics, tokens };
+    writeJSON('replay.home', { ts:Date.now(), key, items, tokens });
     rerenderFilter();
   } catch (err) { flash('Error: ' + err.message); }
+}
+
+function hasMore() {
+  if (!pageState) return false;
+  return pageState.mode==='search' ? !!pageState.token : Object.values(pageState.tokens||{}).some(Boolean);
+}
+async function loadMore() {
+  if (!pageState || !secrets.apiKey) return;
+  const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    let newIds = [];
+    if (pageState.mode==='search') {
+      const { ids, next } = await searchPage(pageState.query, pageState.token);
+      newIds = ids; pageState.token = next;
+    } else {
+      for (const t of pageState.topics) {
+        const tok = pageState.tokens[t]; if (!tok) continue;
+        const { ids, next } = await searchPage(t, tok);
+        newIds.push(...ids); pageState.tokens[t] = next;
+      }
+    }
+    const seen = new Set(lastResults.map(v => v.id));
+    newIds = Array.from(new Set(newIds)).filter(id => !seen.has(id));
+    if (newIds.length) {
+      const more = await fetchVideos(newIds);
+      lastResults = lastResults.concat(pageState.mode==='home' ? shuffle(more) : more);
+    }
+    rerenderFilter();
+  } catch (err) { flash('Error: ' + err.message); if ($('loadMore')) { $('loadMore').disabled=false; $('loadMore').textContent='＋ Load more'; } }
 }
 
 function isBlocked(v) {
@@ -571,9 +607,17 @@ function rerenderFilter() {
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
   renderCards(shown);
+  if (hasMore()) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:10px';
+    const b = document.createElement('button');
+    b.id = 'loadMore'; b.className = 'primary'; b.textContent = '＋ Load more';
+    b.onclick = loadMore;
+    wrap.appendChild(b); $('grid').appendChild(wrap);
+  }
   flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}`, true);
   $('empty').textContent = shown.length ? '' :
-    (lastResults.length ? `No ${homeSub} here — try the other sub-tab or a different filter.` :
+    (lastResults.length ? `No ${homeSub} here — try the other sub-tab, or ＋ Load more.` :
      (activeFilters.length ? '' : 'Add topics in ⚙ Preferences, or type a filter above.'));
 }
 
@@ -715,7 +759,7 @@ function mergeById(a,b,tomb){
 }
 function mergeTomb(a,b){
   const out={};
-  ['history','watchLater','favorites','searches','blocks'].forEach(k=>{
+  ['history','watchLater','favorites'].forEach(k=>{
     const m={...(a?.[k]||{})};
     Object.entries(b?.[k]||{}).forEach(([id,ts])=>{ if(m[id]==null || ts>m[id]) m[id]=ts; });
     out[k]=m;
@@ -731,8 +775,13 @@ function mergeData(local, remote) {
   if (!remote) return local;
   const m = defaultData();
   m.deleted = mergeTomb(local.deleted, remote.deleted);
-  m.blocks = unionArr(local.blocks, remote.blocks).filter(w => m.deleted.blocks[w]==null);
-  m.savedSearches = unionArr(local.savedSearches, remote.savedSearches).filter(s => m.deleted.searches[s]==null).slice(0,12);
+  // blocks & saved searches: whole-list last-edit-wins (no tombstones — they're plain strings)
+  const lbu = local.blocksUpdatedAt||0, rbu = remote.blocksUpdatedAt||0;
+  m.blocks = (rbu > lbu ? remote.blocks : local.blocks) || [];
+  m.blocksUpdatedAt = Math.max(lbu, rbu);
+  const lsu = local.savedSearchesUpdatedAt||0, rsu = remote.savedSearchesUpdatedAt||0;
+  m.savedSearches = ((rsu > lsu ? remote.savedSearches : local.savedSearches) || []).slice(0,20);
+  m.savedSearchesUpdatedAt = Math.max(lsu, rsu);
   m.history = mergeById(local.history, remote.history, m.deleted.history).slice(0,2000);
   m.watchLater = mergeById(local.watchLater, remote.watchLater, m.deleted.watchLater);
   m.favorites = mergeById(local.favorites, remote.favorites, m.deleted.favorites);
