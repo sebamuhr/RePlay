@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#000000" />
+<meta name="referrer" content="strict-origin-when-cross-origin" />
 <link rel="manifest" href="manifest.json" />
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
@@ -672,7 +673,8 @@ function play(v) {
   addHistory(v);          // saves + budget state persisted together
   renderBudgets();
   playing = v;
-  $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&modestbranding=1&autoplay=1`;
+  const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
+  $('iframe').src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
   syncPlayerButtons();
@@ -816,6 +818,7 @@ function refreshAll(){ renderBlocks(); renderTopics(); renderBudgets(); renderBu
 
 (async function init(){
   refreshAll();
+  if (location.protocol === 'file:') toast('Heads up: open RePlay from a URL (GitHub Pages or localhost), not a file:// path — file:// blocks YouTube playback (error 153).');
   if (!secrets.apiKey) $('panel').classList.add('open');
   if (secrets.ghToken && secrets.gistId) {
     try { const remote = await pullSync(); if (remote){ data = mergeData(data, remote); saveData({touch:false,sync:false}); refreshAll(); setSyncState('synced ✓'); } }
