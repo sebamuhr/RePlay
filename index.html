@@ -132,6 +132,12 @@
   .suggest .like:hover, .suggest .dislike:hover { filter:none; }
   .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
   .sublabel { font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  .led { width:14px; height:14px; border-radius:50%; cursor:pointer; flex:0 0 auto; border:1px solid #333; transition:background .2s, box-shadow .2s; }
+  .led[data-state="off"] { background:#444; }
+  .led[data-state="green"] { background:var(--good); box-shadow:0 0 7px var(--good); }
+  .led[data-state="red"] { background:var(--accent); box-shadow:0 0 7px var(--accent); }
+  .led[data-state="checking"] { background:var(--warn); box-shadow:0 0 7px var(--warn); }
+  .actions button.hide { color:#ff9a9a; }
 
   /* home sub-tabs (Videos / Shorts) */
   .subtabs { max-width:1100px; margin:10px auto 0; display:flex; gap:6px; }
@@ -149,6 +155,7 @@
     </div>
     <button class="primary" id="searchBtn">Add</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
+    <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
 
   <div class="subbar">
@@ -187,6 +194,15 @@
     <div class="blocklist" id="topicPicker"></div>
 
     <hr class="hr">
+    <h3>Channels <span style="color:var(--muted);font-weight:400">— 👍 follow · 🚫 hide</span></h3>
+    <p>While watching, use <b>👍 Follow channel</b> or <b>🚫 Hide channel</b>. The LED dot up top turns 🔴 when a followed channel has new uploads — tap it to load them (cheap: ~1 quota unit per channel).</p>
+    <div class="sublabel">👍 Followed</div>
+    <div class="blocklist" id="followedList"></div>
+    <div class="sublabel">🚫 Hidden channels</div>
+    <div class="blocklist" id="hiddenChannelsList"></div>
+    <div class="row" style="margin-top:10px"><button id="checkChannelsBtn">Check for new uploads</button></div>
+
+    <hr class="hr">
     <h3>Shorts</h3>
     <p>Anything under 60 seconds is a Short. They live in their own sub-tab on Home.</p>
     <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts entirely (no Shorts sub-tab)</label>
@@ -223,7 +239,9 @@
       <div class="actions">
         <button id="pLater">＋ Watch Later</button>
         <button id="pFav">★ Favorite</button>
-        <button id="pBlock">Block channel</button>
+        <button id="pFollow">👍 Follow channel</button>
+        <button id="pHideCh">🚫 Hide channel</button>
+        <button id="pHideVid">🚫 Not interested</button>
         <a id="pOpen" href="#" target="_blank" rel="noopener"><button type="button">Open on YouTube ↗</button></a>
         <button id="closeModal">Close ✕</button>
       </div>
@@ -247,6 +265,11 @@ function defaultData() {
     history: [],          // [{...video, ts}]
     watchLater: [],
     favorites: [],
+    hidden: {},           // videoId -> ts ("not interested", hidden forever)
+    followed: [],         // [{id,title,lastVideoId,ts}] channels you follow
+    followedUpdatedAt: 0,
+    hiddenChannels: [],   // [{id,title,ts}] channels hidden forever
+    hiddenChannelsUpdatedAt: 0,
     prefs: {
       hideShorts: false,
       topics: [],
@@ -271,6 +294,9 @@ data.prefs = Object.assign(defaultData().prefs, data.prefs||{});
 data.prefs.budgets = Object.assign(defaultData().prefs.budgets, data.prefs.budgets||{});
 data.budgetState = Object.assign(defaultData().budgetState, data.budgetState||{});
 data.deleted = Object.assign(defaultData().deleted, data.deleted||{});
+data.hidden = data.hidden || {};
+data.followed = data.followed || [];
+data.hiddenChannels = data.hiddenChannels || [];
 
 // Local pool of discovered videos (device-only cache; the browsable "feed").
 const POOL_KEY = 'replay.pool', POOL_MAX = 1000;
@@ -605,7 +631,7 @@ async function fetchVideos(ids) {
     if (d.error) throw new Error(d.error.message || 'API error');
     (d.items||[]).forEach(v => {
       const dur = parseISODuration(v.contentDetails.duration);
-      out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle,
+      out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle, channelId:v.snippet.channelId,
         description:v.snippet.description||'', tags:v.snippet.tags||[],
         thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
         duration:dur, isShort: dur>0 && dur<60 });
@@ -682,9 +708,13 @@ async function findMore(order) {
 }
 
 function isBlocked(v) {
-  if (!data.blocks.length) return false;
-  const hay = (v.title+' '+v.description+' '+(v.tags||[]).join(' ')+' '+v.channel).toLowerCase();
-  return data.blocks.some(w => hay.includes(w));
+  if (data.hidden && data.hidden[v.id]) return true;                                   // "not interested" video
+  if (v.channelId && data.hiddenChannels.some(c => c.id === v.channelId)) return true; // hidden channel
+  if (data.blocks.length) {
+    const hay = (v.title+' '+v.description+' '+(v.tags||[]).join(' ')+' '+v.channel).toLowerCase();
+    if (data.blocks.some(w => hay.includes(w))) return true;                            // disliked word/topic
+  }
+  return false;
 }
 
 /* ============================== RENDER LIST ============================== */
@@ -748,6 +778,7 @@ function card(v) {
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
+        ${currentTab==='search' ? '<button class="hide" title="Not interested — hide this video">🚫</button>' : ''}
         ${currentTab!=='search' ? '<button class="remove">✕ Remove</button>' : ''}
       </div>
     </div>`;
@@ -755,6 +786,8 @@ function card(v) {
   el.querySelector('.title').onclick = () => play(v);
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
+  const hd = el.querySelector('.hide');
+  if (hd) hd.onclick = (e) => { e.stopPropagation(); hideVideo(v); };
   const rm = el.querySelector('.remove');
   if (rm) rm.onclick = (e) => { e.stopPropagation(); removeFromList(TAB_LIST[currentTab], v.id); };
   return el;
@@ -768,7 +801,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,description:v.description,tags:v.tags,thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description,tags:v.tags,thumb:v.thumb,duration:v.duration,isShort:v.isShort}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
@@ -784,6 +817,92 @@ function addHistory(v) {
   delete data.deleted.history[v.id];  // re-watching un-deletes it
   saveData();
   if (pool.some(x=>x.id===v.id)) { pool = pool.filter(x=>x.id!==v.id); savePool(); } // watched → leaves the unwatched pool
+}
+
+/* ============================== HIDE VIDEO / CHANNELS ============================== */
+function refreshCurrent(){ if (currentTab==='search') showFeed(); else renderTab(); }
+
+function hideVideo(v) {
+  data.hidden[v.id] = Date.now(); saveData();
+  pool = pool.filter(x => x.id !== v.id); savePool();
+  refreshCurrent();
+  toast('Hidden — won’t show this video again.');
+}
+const isFollowed = id => data.followed.some(c => c.id === id);
+function followChannel(v) {
+  if (!v.channelId) { toast('Channel info missing — re-open this video from a fresh search.'); return; }
+  data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== v.channelId); data.hiddenChannelsUpdatedAt = Date.now();
+  if (!isFollowed(v.channelId)) data.followed.push({ id:v.channelId, title:v.channel, lastVideoId:v.id, ts:Date.now() });
+  data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed();
+  toast(`Following “${v.channel}”.`);
+}
+function unfollowChannel(id) { data.followed = data.followed.filter(c => c.id !== id); data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); }
+function hideChannel(v) {
+  if (!v.channelId) { addDislike(v.channel); return; } // fallback: block by name
+  data.followed = data.followed.filter(c => c.id !== v.channelId); data.followedUpdatedAt = Date.now();
+  if (!data.hiddenChannels.some(c => c.id === v.channelId)) data.hiddenChannels.push({ id:v.channelId, title:v.channel, ts:Date.now() });
+  data.hiddenChannelsUpdatedAt = Date.now();
+  pool = pool.filter(x => x.channelId !== v.channelId); savePool();
+  saveData(); renderChannels(); renderLed(); refreshCurrent();
+  toast(`Hiding channel “${v.channel}”.`);
+}
+function unhideChannel(id) { data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== id); data.hiddenChannelsUpdatedAt = Date.now(); saveData(); renderChannels(); refreshCurrent(); }
+
+/* ---- "New uploads?" LED for followed channels (cheap: ~1 unit/channel) ---- */
+const uploadsPlaylist = id => 'UU' + id.slice(2);   // a channel's uploads playlist id
+let ledNew = []; // channel ids that have new uploads since last seen
+async function channelLatest(id) {
+  const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=1&playlistId=${uploadsPlaylist(id)}&key=${secrets.apiKey}`;
+  const d = await (await fetch(url)).json();
+  if (d.error) throw new Error(d.error.message || 'API error');
+  return (d.items && d.items[0] && d.items[0].contentDetails.videoId) || null;
+}
+async function checkChannels() {
+  if (!data.followed.length || !secrets.apiKey) { ledNew = []; renderLed(); return; }
+  setLed('checking');
+  const newOnes = [];
+  for (const c of data.followed) { try { const latest = await channelLatest(c.id); if (latest && latest !== c.lastVideoId) newOnes.push(c.id); } catch {} }
+  ledNew = newOnes; renderLed();
+}
+async function fetchChannelNew() {
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key ⚙'); return; }
+  if (!data.followed.length) { toast('Follow a channel first (▶ a video → 👍 Follow channel).'); return; }
+  if (!ledNew.length) { checkChannels(); toast('Checking your channels…'); return; }
+  setLed('checking');
+  try {
+    let ids = [];
+    for (const c of data.followed.filter(c => ledNew.includes(c.id))) {
+      const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=10&playlistId=${uploadsPlaylist(c.id)}&key=${secrets.apiKey}`;
+      const d = await (await fetch(url)).json();
+      if (d.error) throw new Error(d.error.message);
+      const vids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
+      ids.push(...vids); if (vids[0]) c.lastVideoId = vids[0];
+    }
+    data.followedUpdatedAt = Date.now();
+    const added = addToPool(await fetchVideos(Array.from(new Set(ids))));
+    saveData(); ledNew = []; renderLed();
+    if (currentTab==='search') { activeFilters = []; renderActiveFilters(); showFeed(); }
+    toast(added ? `Pulled in ${added} new video${added>1?'s':''} from your channels.` : 'Already up to date.');
+  } catch (e) { toast(apiErr(e)); renderLed(); }
+}
+function setLed(state){ const el = $('led'); if (el) el.dataset.state = state; }
+function renderLed() {
+  const el = $('led'); if (!el) return;
+  if (!data.followed.length) { el.dataset.state='off'; el.title='Follow channels to track new uploads'; }
+  else if (ledNew.length) { el.dataset.state='red'; el.title=`${ledNew.length} followed channel(s) have new uploads — tap to load`; }
+  else { el.dataset.state='green'; el.title='Followed channels up to date — tap to re-check'; }
+}
+function renderChannels() {
+  const f = $('followedList');
+  if (f) {
+    f.innerHTML = data.followed.length ? '' : '<span style="color:var(--muted);font-size:13px">No followed channels yet — ▶ a video, then “👍 Follow channel”.</span>';
+    data.followed.forEach(c => { const el=document.createElement('span'); el.className='topic'; el.innerHTML=`${escapeHtml(c.title||c.id)} <span class="x">✕</span>`; el.querySelector('.x').onclick=()=>unfollowChannel(c.id); f.appendChild(el); });
+  }
+  const h = $('hiddenChannelsList');
+  if (h) {
+    h.innerHTML = data.hiddenChannels.length ? '' : '<span style="color:var(--muted);font-size:13px">No hidden channels.</span>';
+    data.hiddenChannels.forEach(c => { const el=document.createElement('span'); el.className='blockword'; el.innerHTML=`${escapeHtml(c.title||c.id)} <span class="x">✕</span>`; el.querySelector('.x').onclick=()=>unhideChannel(c.id); h.appendChild(el); });
+  }
 }
 
 /* ============================== TABS ============================== */
@@ -839,10 +958,14 @@ function syncPlayerButtons() {
   const inLater=data.watchLater.some(x=>x.id===playing.id), inFav=data.favorites.some(x=>x.id===playing.id);
   $('pLater').classList.toggle('on',inLater); $('pLater').textContent = inLater?'✓ Watch Later':'＋ Watch Later';
   $('pFav').classList.toggle('on',inFav); $('pFav').textContent = inFav?'★ Favorited':'★ Favorite';
+  const fol = playing.channelId && isFollowed(playing.channelId);
+  $('pFollow').classList.toggle('on',fol); $('pFollow').textContent = fol ? '👍 Following' : '👍 Follow channel';
 }
 $('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
 $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
-$('pBlock').onclick = () => { if(!playing) return; const ch = playing.channel; addDislike(ch); history.back(); toast(`Hiding “${ch}” from now on.`); };
+$('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isFollowed(playing.channelId)) unfollowChannel(playing.channelId); else followChannel(playing); syncPlayerButtons(); };
+$('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
+$('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
 function closePlayerUI(){ $('modal').classList.remove('open'); $('iframe').src=''; }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
@@ -919,6 +1042,14 @@ function mergeData(local, remote) {
   m.favorites = mergeById(local.favorites, remote.favorites, m.deleted.favorites);
   m.prefs = (remote.prefs?.updatedAt||0) > (local.prefs?.updatedAt||0) ? remote.prefs : local.prefs;
   m.budgetState = mergeBudget(local.budgetState, remote.budgetState);
+  // hidden videos: union of maps, keep newest ts
+  m.hidden = { ...(local.hidden||{}) };
+  Object.entries(remote.hidden||{}).forEach(([k,v]) => { if (!m.hidden[k] || v > m.hidden[k]) m.hidden[k] = v; });
+  // followed / hidden channels: whole-list last-edit-wins
+  const lf = local.followedUpdatedAt||0, rf = remote.followedUpdatedAt||0;
+  m.followed = ((rf > lf ? remote.followed : local.followed) || []); m.followedUpdatedAt = Math.max(lf, rf);
+  const lhc = local.hiddenChannelsUpdatedAt||0, rhc = remote.hiddenChannelsUpdatedAt||0;
+  m.hiddenChannels = ((rhc > lhc ? remote.hiddenChannels : local.hiddenChannels) || []); m.hiddenChannelsUpdatedAt = Math.max(lhc, rhc);
   m.updatedAt = Math.max(local.updatedAt||0, remote.updatedAt||0);
   return m;
 }
@@ -946,7 +1077,7 @@ async function pushSync() {
 }
 // Re-render from current data WITHOUT re-fetching feeds (used after a sync push).
 function softRefresh() {
-  renderDislikes(); renderTopics(); renderBudgets(); renderBudgetPrefs();
+  renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
@@ -995,7 +1126,9 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ renderDislikes(); renderTopics(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+function refreshAll(){ renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+$('led').onclick = fetchChannelNew;
+$('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
 
 (async function init(){
   refreshAll();
@@ -1007,6 +1140,7 @@ function refreshAll(){ renderDislikes(); renderTopics(); renderSuggestions(); re
     catch(e){ setSyncState('offline', true); }
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if (secrets.apiKey && data.followed.length) checkChannels(); // cheap: light the LED on startup
 })();
 </script>
 </body>
