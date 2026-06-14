@@ -130,10 +130,8 @@
   .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
   .modal.shorts #shortMore { display:block; position:absolute; top:14px; left:14px; z-index:6;
     background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); border-radius:999px; padding:7px 14px; font-size:13px; cursor:pointer; }
-  #shortClose { display:none; }
-  .modal.shorts #shortClose { display:block; position:absolute; top:14px; right:14px; z-index:6; width:38px; height:38px; border-radius:50%;
-    background:rgba(0,0,0,.55); color:#fff; border:1px solid rgba(255,255,255,.3); font-size:16px; cursor:pointer; }
-  .navbtn { color:var(--accent); border-color:#3a1d1d; font-weight:700; padding:10px 12px; }
+  #playerClose { position:fixed; top:14px; right:14px; z-index:70; width:40px; height:40px; border-radius:50%;
+    background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.35); font-size:18px; cursor:pointer; }
   @keyframes shortIn { from { transform:translateY(40px); opacity:.15; } to { transform:none; opacity:1; } }
   .modal.shorts .frame.anim { animation: shortIn .28s ease; }
   .modal.shorts #playerMeta { display:none; }
@@ -194,8 +192,6 @@
 <body>
 <header>
   <div class="bar">
-    <button class="icon-btn navbtn" id="navBack" title="Back">◀</button>
-    <button class="icon-btn navbtn" id="navFwd" title="Forward">▶</button>
     <div class="logo">Re<span>Play</span></div>
     <div class="qwrap">
       <input id="q" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
@@ -300,12 +296,12 @@
 
 <!-- PLAYER -->
 <div class="modal" id="modal">
+  <button id="playerClose" type="button" title="Close">✕</button>
   <div class="player">
     <div class="frame" id="frame">
       <iframe id="iframe" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
       <div id="shortSwipe"></div>
       <button id="shortMore" type="button">More ▾</button>
-      <button id="shortClose" type="button" title="Close">✕</button>
     </div>
     <div id="playerMeta">
       <div class="controls">
@@ -1284,7 +1280,7 @@ function openPlayer(v, restore, replace) {
   ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
   ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s';
   ifr.onload = () => { ifr.style.opacity = '1'; };
-  const sParams = v.isShort ? `&loop=1&playlist=${v.id}&controls=0&enablejsapi=1` : ''; // shorts: loop, no YT controls, JS API for tap-pause
+  const sParams = v.isShort ? `&controls=0&enablejsapi=1` : ''; // shorts: no controls bar, no playlist (no ◀); enablejsapi → tap-to-pause
   ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${sParams}${origin}`;
   frame.insertBefore(ifr, frame.firstChild);
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
@@ -1361,9 +1357,7 @@ function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-ope
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
 $('shortMore').onclick = (e) => { e.stopPropagation(); $('modal').classList.toggle('sheet-open'); };
-$('shortClose').onclick = (e) => { e.stopPropagation(); history.back(); };
-$('navBack').onclick = () => history.back();
-$('navFwd').onclick = () => history.forward();
+$('playerClose').onclick = () => history.back();
 document.addEventListener('keydown', e => {
   if (!$('modal').classList.contains('open')) return;
   if (e.key==='Escape') { history.back(); return; }
