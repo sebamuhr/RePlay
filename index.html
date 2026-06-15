@@ -445,6 +445,18 @@ function saveSecrets() { writeJSON(SECRETS_KEY, secrets); }
 /* ============================== HELPERS ============================== */
 const $ = id => document.getElementById(id);
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// YouTube's API returns titles/descriptions HTML-entity-encoded (Don&#39;t, Rock &amp; Roll).
+// Decode them so they display correctly AND so text search can actually match them.
+const _entityDecoder = document.createElement('textarea');
+function decodeEntities(s) { if (!s) return ''; _entityDecoder.innerHTML = String(s); return _entityDecoder.value; }
+// Normalised text for searching/matching: decoded, accent-stripped, apostrophes dropped (don't → dont),
+// every other punctuation collapsed to a space. Makes "pokemon" match "Pokémon", "dont" match "Don't", etc.
+const normText = s => decodeEntities(String(s||''))
+  .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/['’`]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim();
 function flash(msg, rich=false) { $('status').innerHTML = rich ? msg : escapeHtml(msg); }
 let toastTimer;
 function toast(msg) { const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),4000); }
@@ -773,8 +785,8 @@ async function fetchVideos(ids) {
     if (d.error) throw new Error(d.error.message || 'API error');
     (d.items||[]).forEach(v => {
       const dur = parseISODuration(v.contentDetails.duration);
-      out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle, channelId:v.snippet.channelId,
-        description:v.snippet.description||'', tags:v.snippet.tags||[],
+      out.push({ id:v.id, title:decodeEntities(v.snippet.title), channel:decodeEntities(v.snippet.channelTitle), channelId:v.snippet.channelId,
+        description:decodeEntities(v.snippet.description||''), tags:v.snippet.tags||[],
         thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
         duration:dur, isShort: dur>0 && dur<=60, publishedAt: v.snippet.publishedAt, live: v.snippet.liveBroadcastContent || 'none' });
     });
@@ -836,9 +848,9 @@ function showFeed() {
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
     if (activeFilters.length) {
-      const words = activeFilters.join(' ').toLowerCase().split(/\s+/).filter(Boolean); // each word must appear in title OR description
+      const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean); // each word must appear in title OR description
       items = items.filter(v => {
-        const hay = (v.title + ' ' + (v.description||'')).toLowerCase(); // title + description only (not tags/channel)
+        const hay = normText(v.title + ' ' + (v.description||'')); // title + description only (not tags/channel)
         return words.every(w => hay.includes(w));
       });
     }
@@ -940,8 +952,8 @@ function isBlocked(v) {
   if (data.hidden && data.hidden[v.id]) return true;                                   // "not interested" video
   if (v.channelId && data.hiddenChannels.some(c => c.id === v.channelId)) return true; // hidden channel
   if (data.blocks.length) {
-    const hay = (v.title+' '+v.description+' '+(v.tags||[]).join(' ')+' '+v.channel).toLowerCase();
-    if (data.blocks.some(w => hay.includes(w))) return true;                            // disliked word/topic
+    const hay = normText(v.title+' '+v.description+' '+(v.tags||[]).join(' ')+' '+v.channel);
+    if (data.blocks.some(w => { const n = normText(w); return n && hay.includes(n); })) return true; // disliked word/topic
   }
   return false;
 }
@@ -1035,7 +1047,7 @@ async function renderChannelsSub() {
         try {
           const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
           if (res.error) throw new Error(res.error.message);
-          channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
+          channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:decodeEntities(it.snippet.title), description:decodeEntities(it.snippet.description||''), thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
           channelQuery = q; channelPageToken = res.nextPageToken || '';
         } catch (e) { channelResults = []; channelQuery = ''; channelPageToken = ''; flash(apiErr(e)); } // keep showing YOUR channels even if the API fails
       }
@@ -1073,7 +1085,7 @@ async function fetchMoreChannels() {
       + (channelPageToken ? `&pageToken=${channelPageToken}` : '');
     const res = await (await fetch(url)).json();
     if (res.error) throw new Error(res.error.message);
-    const more = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
+    const more = (res.items||[]).map(it => ({ id:it.id.channelId, title:decodeEntities(it.snippet.title), description:decodeEntities(it.snippet.description||''), thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
     const seen = new Set(channelResults.map(c => c.id));
     const fresh = more.filter(c => !seen.has(c.id));
     channelResults = channelResults.concat(fresh);
@@ -1141,8 +1153,8 @@ function card(v) {
       ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
     </div>
     <div class="meta">
-      <p class="title">${escapeHtml(v.title)}</p>
-      <div class="channel">${v.channelId ? `<a href="#" class="chlink${isFollowed(v.channelId)?' followed':''}">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel)}</div>
+      <p class="title">${escapeHtml(decodeEntities(v.title))}</p>
+      <div class="channel">${v.channelId ? `<a href="#" class="chlink${isFollowed(v.channelId)?' followed':''}">${escapeHtml(decodeEntities(v.channel))}</a>` : escapeHtml(decodeEntities(v.channel))}</div>
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
