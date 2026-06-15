@@ -86,6 +86,7 @@
   .badge { position:absolute; bottom:6px; right:6px; background:rgba(0,0,0,.85); color:#fff;
     font-size:11px; padding:2px 6px; border-radius:6px; }
   .badge.short { left:6px; right:auto; background:var(--accent); font-weight:600; }
+  .badge.live { left:6px; right:auto; top:6px; bottom:auto; background:#e00; color:#fff; font-weight:700; }
   .meta { padding:10px 12px 12px; display:flex; flex-direction:column; flex:1; }
   .title { font-size:14px; line-height:1.35; margin:0 0 6px; cursor:pointer; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .channel { color:var(--muted); font-size:12px; margin-top:auto; margin-bottom:8px; }
@@ -747,7 +748,7 @@ async function fetchVideos(ids) {
       out.push({ id:v.id, title:v.snippet.title, channel:v.snippet.channelTitle, channelId:v.snippet.channelId,
         description:v.snippet.description||'', tags:v.snippet.tags||[],
         thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
-        duration:dur, isShort: dur>0 && dur<=60, publishedAt: v.snippet.publishedAt });
+        duration:dur, isShort: dur>0 && dur<=60, publishedAt: v.snippet.publishedAt, live: v.snippet.liveBroadcastContent || 'none' });
     });
   }
   return out;
@@ -802,7 +803,7 @@ function showFeed() {
   if (currentTab !== 'search') return;
   let items;
   if (channelView) {
-    items = channelVideos.filter(v => !isBlocked(v)); // viewing a single channel
+    items = channelVideos.filter(v => !isBlocked(v)); // viewing a single channel (already newest-first)
   } else {
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
@@ -813,9 +814,26 @@ function showFeed() {
         return terms.every(t => hay.includes(t));
       });
     }
+    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
+    refreshStaleLive();
   }
   lastResults = items;
   rerenderFilter();
+}
+// Re-fetch pool items that were live/upcoming/0-duration so ended streams get their real length.
+let liveRefreshAt = 0;
+async function refreshStaleLive() {
+  if (!secrets.apiKey || Date.now() - liveRefreshAt < 5*60000) return;
+  const stale = pool.filter(v => v.live==='live' || v.live==='upcoming' || v.duration===0).map(v => v.id);
+  if (!stale.length) return;
+  liveRefreshAt = Date.now();
+  try {
+    const fresh = await fetchVideos(stale.slice(0, 50));
+    const byId = new Map(fresh.map(v => [v.id, v]));
+    let changed = false;
+    pool.forEach(v => { const f = byId.get(v.id); if (f && (f.duration!==v.duration || f.live!==v.live)) { v.duration=f.duration; v.live=f.live; v.isShort=f.isShort; v.publishedAt=f.publishedAt||v.publishedAt; changed=true; } });
+    if (changed) { savePool(); if (currentTab==='search' && !channelView) showFeed(); }
+  } catch {}
 }
 // kept names for existing callers — both now just show the local feed (no API)
 function loadHome() { showFeed(); }
@@ -838,8 +856,7 @@ async function openChannel(id, title, restore) {
     if (d.error) throw new Error(d.error.message);
     const ids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
     channelVideos = await fetchVideos(ids);
-    channelCache = { id, items: channelVideos };
-    addToPool(channelVideos); // save + auto-track
+    channelCache = { id, items: channelVideos }; // shown in the channel view only — NOT added to Home pool
     showFeed();
   } catch (e) { flash(apiErr(e)); }
 }
@@ -956,6 +973,7 @@ function card(v) {
     <div class="thumb${v.isShort ? ' portrait' : ''}">
       <img loading="lazy" src="${v.thumb}" alt="">
       ${v.isShort ? '<span class="badge short">SHORT</span>' : ''}
+      ${v.live==='live' ? '<span class="badge live">● LIVE</span>' : (v.live==='upcoming' ? '<span class="badge live">UPCOMING</span>' : '')}
       ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
     </div>
     <div class="meta">
@@ -990,7 +1008,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description||'',tags:v.tags||[],thumb:v.thumb,duration:v.duration,isShort:v.isShort,publishedAt:v.publishedAt}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description||'',tags:v.tags||[],thumb:v.thumb,duration:v.duration,isShort:v.isShort,publishedAt:v.publishedAt,live:v.live||'none'}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
@@ -1675,6 +1693,19 @@ $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); s
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''}`; }
+
+// Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
+let lastPullAt = 0;
+async function autoPull(){
+  if (!secrets.ghToken || !secrets.gistId) return;
+  if (document.visibilityState !== 'visible') return;
+  if (Date.now() - lastPullAt < 15000) return;   // throttle
+  lastPullAt = Date.now();
+  try { const remote = await pullSync(); if (remote) { data = mergeData(data, remote); saveData({touch:false, sync:false}); softRefresh(); setSyncState('synced ✓'); } } catch {}
+}
+document.addEventListener('visibilitychange', autoPull);
+window.addEventListener('focus', autoPull);
+setInterval(autoPull, 90000); // every ~90s while the app is open
 
 /* ============================== EXPORT / IMPORT ============================== */
 $('exportBtn').onclick = () => {
