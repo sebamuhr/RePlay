@@ -876,13 +876,22 @@ function showFeed() {
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
     if (activeFilters.length) {
-      const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean); // each word must appear in title OR description
-      items = items.filter(v => {
-        const hay = normText(v.title + ' ' + (v.description||'')); // title + description only (not tags/channel)
-        return words.every(w => hay.includes(w));
-      });
+      const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean);
+      // Loose, ranked match: a video is a hit if it contains ANY of the words (title + description +
+      // channel). Results are ordered by how many words matched, then recency — far more forgiving
+      // than requiring every word, and it surfaces the close-but-not-exact matches YouTube would find.
+      items = items
+        .map(v => {
+          const hay = normText(v.title + ' ' + (v.description||'') + ' ' + (v.channel||''));
+          let score = 0; for (const w of words) if (hay.includes(w)) score++;
+          return { v, score };
+        })
+        .filter(o => o.score > 0)
+        .sort((a,b) => (b.score - a.score) || ((Date.parse(b.v.publishedAt)||0) - (Date.parse(a.v.publishedAt)||0)))
+        .map(o => o.v);
+    } else {
+      items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
     }
-    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
     refreshStaleLive();
   }
   lastResults = items;
