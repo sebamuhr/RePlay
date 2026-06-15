@@ -866,6 +866,7 @@ async function openChannel(id, title, restore) {
   if (!id) return;
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key ⚙'); return; }
   currentTab = 'search'; activeFilters = []; channelView = { id, title };
+  if (homeSub === 'channels') homeSub = 'videos'; // a channel view shows its videos, not the channels list
   document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab==='search'));
   $('homeSubtabs').style.display = 'flex';
   renderActiveFilters(); renderRecentSearches();
@@ -951,12 +952,13 @@ function rerenderFilter() {
   renderChannelBanner();
   const hideShorts = data.prefs.hideShorts;
   if (hideShorts && homeSub === 'shorts') homeSub = 'videos';
+  if (channelView && homeSub === 'channels') homeSub = 'videos'; // inside a channel we show ITS videos, never the channels list
   // sub-tab visibility: Shorts hidden entirely if pref set
   $('homeSubtabs').style.display = 'flex';
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   $('playAllBtn').style.display = (homeSub==='channels') ? 'none' : '';
-  if (homeSub === 'channels') { renderChannelsSub(); return; }
+  if (homeSub === 'channels' && !channelView) { renderChannelsSub(); return; }
 
   const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
   const videos = allowed.filter(v => !isVert(v));
