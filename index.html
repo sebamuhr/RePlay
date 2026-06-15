@@ -81,16 +81,17 @@
   .chan-card .nm { font-size:13px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   /* channel search list */
   .grid.chsearch { display:block; }
-  .chrow { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px;
-    display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; }
-  .chrow img.cav, .chrow .cav { width:56px; height:56px; border-radius:50%; object-fit:cover; }
-  .chrow .cav { background:#222; display:flex; align-items:center; justify-content:center; font-size:22px; color:#888; }
-  .chrow .chname { font-size:15px; font-weight:600; cursor:pointer; }
+  .chrow { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:12px;
+    display:grid; grid-template-columns:auto 1fr auto; gap:16px; align-items:center; }
+  .chrow img.cav, .chrow .cav { width:72px; height:72px; border-radius:50%; object-fit:cover; }
+  .chrow .cav { background:#222; display:flex; align-items:center; justify-content:center; font-size:28px; color:#888; }
+  .chrow .chname { font-size:16px; font-weight:600; cursor:pointer; }
   .chrow .chname.followed { color:var(--blue); }
-  .chrow .chdesc { color:var(--muted); font-size:12px; line-height:1.45; margin-top:3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .chrow .chdesc { color:var(--muted); font-size:13px; line-height:1.5; margin-top:5px; display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
   .chrow .chacts { display:flex; gap:6px; align-items:center; }
   .chrow .chexpand { width:34px; height:34px; border-radius:50%; padding:0; font-size:13px; }
   .chrow .chvideos { grid-column:1/-1; display:none; gap:10px; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); margin-top:6px; }
+  .chmore { text-align:center; padding:8px 0 20px; }
   .chrow.expanded .chvideos { display:grid; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; transition:border-color .12s; display:flex; flex-direction:column; }
   .card:hover { border-color:#444; }
@@ -107,6 +108,9 @@
   .actions .when { margin-left:auto; color:var(--muted); font-size:11px; white-space:nowrap; }
   .actions button { padding:6px 9px; font-size:12px; border-radius:8px; }
   .actions button.on { color:var(--good); border-color:#1f3a26; }
+  .actions button.orient { padding:6px 8px; line-height:1; }
+  .actions button.orient .ph { display:inline-block; transition:transform .15s; }
+  .actions button.orient.horiz .ph { transform:rotate(90deg); } /* phone laid on its side = horizontal */
   .actions button.remove { color:#ff9a9a; border-color:#3a1d1d; }
   .actions button.remove:hover { border-color:var(--accent); }
 
@@ -400,6 +404,7 @@ function defaultData() {
     },
     budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
     deleted: { history:{}, watchLater:{}, favorites:{} }, // tombstones for by-id lists
+    orient: {},           // videoId -> { o:'vert'|'horiz', ts } — manual orientation override
     updatedAt: 0,
   };
 }
@@ -419,6 +424,7 @@ data.followed = data.followed || [];
 data.hiddenChannels = data.hiddenChannels || [];
 data.pool = data.pool || [];
 data.tracked = data.tracked || [];
+data.orient = data.orient || {};
 
 // Pool (browsable feed) + auto-tracked channels now live in the synced data.
 // (migrate any old device-local copies on first run)
@@ -942,7 +948,18 @@ function isBlocked(v) {
 
 /* ============================== RENDER LIST ============================== */
 // "Vertical" = short enough to be a Short (our orientation proxy; YouTube has no orientation field).
-function isVert(v) { return v.duration > 0 && v.duration <= (data.prefs.verticalMaxSec || 60); }
+// A manual override (set from the card's phone toggle) always wins over the duration guess.
+function isVert(v) {
+  const o = data.orient && data.orient[v.id];
+  if (o) return o.o === 'vert';
+  return v.duration > 0 && v.duration <= (data.prefs.verticalMaxSec || 60);
+}
+function setOrient(v, o) {
+  data.orient = data.orient || {};
+  data.orient[v.id] = { o, ts: Date.now() };
+  saveData();
+  refreshCurrent(); // re-render so the video jumps to the matching sub-tab
+}
 function visibleList(items, applyHideShorts=true) {
   return items.filter(v => !isBlocked(v) && !(applyHideShorts && data.prefs.hideShorts && isVert(v)));
 }
@@ -956,6 +973,7 @@ function rerenderFilter() {
   // sub-tab visibility: Shorts hidden entirely if pref set
   $('homeSubtabs').style.display = 'flex';
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
+  document.querySelector('.subtab[data-sub="channels"]').style.display = channelView ? 'none' : ''; // not while inside a channel
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   $('playAllBtn').style.display = (homeSub==='channels') ? 'none' : '';
   if (homeSub === 'channels' && !channelView) { renderChannelsSub(); return; }
@@ -988,7 +1006,7 @@ function rerenderFilter() {
 }
 
 /* ---- Channels sub-tab: search for channels (or show your followed ones) ---- */
-let channelResults = [], channelQuery = '';
+let channelResults = [], channelQuery = '', channelPageToken = '';
 async function renderChannelsSub() {
   const grid = $('grid'); grid.className = 'grid chsearch';
   if (activeFilters.length) {
@@ -1018,14 +1036,15 @@ async function renderChannelsSub() {
           const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
           if (res.error) throw new Error(res.error.message);
           channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
-          channelQuery = q;
-        } catch (e) { channelResults = []; channelQuery = ''; flash(apiErr(e)); } // keep showing YOUR channels even if the API fails
+          channelQuery = q; channelPageToken = res.nextPageToken || '';
+        } catch (e) { channelResults = []; channelQuery = ''; channelPageToken = ''; flash(apiErr(e)); } // keep showing YOUR channels even if the API fails
       }
       apiList = (channelResults || []).filter(c => !localById.has(c.id));
     }
 
     const list = localList.concat(apiList);
     renderChannelCards(list);
+    if (secrets.apiKey) addFetchMoreChannelsBtn(); // "fetch new channels" footer (next page from YouTube)
     const yours = localList.length ? ` <span style="color:var(--muted)">· ${localList.length} of yours</span>` : '';
     flash(`<b>${list.length}</b> channels for “${escapeHtml(q)}”${yours}`, true);
     $('empty').textContent = list.length ? '' :
@@ -1036,6 +1055,33 @@ async function renderChannelsSub() {
     flash(`<b>${list.length}</b> followed channels`, true);
     $('empty').textContent = list.length ? '' : 'Type a name in the search bar to find channels, or follow some from videos.';
   }
+}
+// "Fetch new channels" footer — pulls the next page of YouTube results for the current query.
+function addFetchMoreChannelsBtn() {
+  const wrap = document.createElement('div'); wrap.className = 'chmore';
+  const b = document.createElement('button'); b.className = 'primary'; b.id = 'fetchMoreCh';
+  b.textContent = '🔄 Fetch new channels';
+  b.onclick = () => fetchMoreChannels();
+  wrap.appendChild(b); $('grid').appendChild(wrap);
+}
+async function fetchMoreChannels() {
+  if (!secrets.apiKey || !activeFilters.length) return;
+  const q = activeFilters.join(' ').trim();
+  const btn = $('fetchMoreCh'); if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`
+      + (channelPageToken ? `&pageToken=${channelPageToken}` : '');
+    const res = await (await fetch(url)).json();
+    if (res.error) throw new Error(res.error.message);
+    const more = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
+    const seen = new Set(channelResults.map(c => c.id));
+    const fresh = more.filter(c => !seen.has(c.id));
+    channelResults = channelResults.concat(fresh);
+    channelPageToken = res.nextPageToken || '';
+    channelQuery = q; // keep the cache valid so the re-render doesn't refetch the first page
+    renderChannelsSub();
+    if (!fresh.length) toast('No new channels from YouTube for this search.');
+  } catch (e) { flash(apiErr(e)); if (btn) { btn.disabled = false; btn.textContent = '🔄 Fetch new channels'; } }
 }
 function renderChannelCards(list) {
   const grid = $('grid'); grid.innerHTML = '';
@@ -1100,6 +1146,7 @@ function card(v) {
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
+        <button class="orient${isVert(v)?'':' horiz'}" title="${isVert(v)?'Vertical — click to mark as Horizontal':'Horizontal — click to mark as Vertical'}"><span class="ph">📱</span></button>
         ${currentTab==='search' ? '<button class="hide" title="Not interested — hide this video">🚫</button>' : ''}
         ${currentTab!=='search' ? '<button class="remove">✕ Remove</button>' : ''}
         ${v.publishedAt ? `<span class="when">${timeAgo(v.publishedAt)}</span>` : ''}
@@ -1111,6 +1158,7 @@ function card(v) {
   if (cl) cl.onclick = (e) => { e.stopPropagation(); e.preventDefault(); openChannel(v.channelId, v.channel); };
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
+  el.querySelector('.orient').onclick = (e) => { e.stopPropagation(); setOrient(v, isVert(v) ? 'horiz' : 'vert'); };
   const hd = el.querySelector('.hide');
   if (hd) hd.onclick = (e) => { e.stopPropagation(); hideVideo(v); };
   const rm = el.querySelector('.remove');
@@ -1407,6 +1455,7 @@ function renderTab() {
   const hideShorts = data.prefs.hideShorts;
   if (hideShorts || homeSub==='channels') homeSub = 'videos'; // no Channels sub-tab on library tabs
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
+  document.querySelector('.subtab[data-sub="channels"]').style.display = 'none'; // Channels search is a Search-tab thing only
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   const videos = all.filter(v => !isVert(v)), shorts = all.filter(v => isVert(v));
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
@@ -1750,6 +1799,9 @@ function mergeData(local, remote) {
   // hidden videos: union of maps, keep newest ts
   m.hidden = { ...(local.hidden||{}) };
   Object.entries(remote.hidden||{}).forEach(([k,v]) => { if (!m.hidden[k] || v > m.hidden[k]) m.hidden[k] = v; });
+  // manual orientation overrides: union of maps, keep the newest decision per video
+  m.orient = { ...(local.orient||{}) };
+  Object.entries(remote.orient||{}).forEach(([k,v]) => { if (!m.orient[k] || (v.ts||0) > (m.orient[k].ts||0)) m.orient[k] = v; });
   // followed / hidden channels: whole-list last-edit-wins
   const lf = local.followedUpdatedAt||0, rf = remote.followedUpdatedAt||0;
   m.followed = ((rf > lf ? remote.followed : local.followed) || []); m.followedUpdatedAt = Math.max(lf, rf);
