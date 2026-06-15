@@ -302,7 +302,8 @@
 
     <hr class="hr">
     <h3>Vertical videos</h3>
-    <p>Anything under 60 seconds is treated as vertical (Shorts) — YouTube's API doesn't expose true orientation, so duration is the proxy. They get the portrait full-screen player.</p>
+    <p>YouTube's API doesn't expose orientation, so we treat short videos as vertical (they get the portrait full-screen player). Raise this if you want longer vertical clips on the Vertical side.</p>
+    <div class="row"><span class="lbl" style="min-width:auto">Treat videos up to</span><input class="num" id="verticalMaxSec" type="number" min="1" value="60"><span class="lbl" style="min-width:auto">seconds as vertical</span></div>
     <label class="switch"><input type="checkbox" id="hideShorts"> Hide vertical videos (no Vertical sub-tab)</label>
 
     <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
@@ -388,6 +389,7 @@ function defaultData() {
     hiddenChannelsUpdatedAt: 0,
     prefs: {
       hideShorts: false,
+      verticalMaxSec: 60,
       topics: [],
       autoFill: { enabled: false, perDay: 5 },
       budgets: {
@@ -516,6 +518,8 @@ $('hideShorts').checked = data.prefs.hideShorts;
 
 $('saveKey').onclick = () => { secrets.apiKey = $('apiKey').value.trim(); saveSecrets(); toast('API key saved ✓'); };
 $('hideShorts').onchange = () => { data.prefs.hideShorts = $('hideShorts').checked; touchPrefs(); rerenderFilter(); };
+$('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
+$('verticalMaxSec').onchange = () => { data.prefs.verticalMaxSec = Math.max(1, +$('verticalMaxSec').value||60); touchPrefs(); refreshCurrent(); };
 
 function touchPrefs(){ data.prefs.updatedAt = Date.now(); saveData(); }
 
@@ -936,8 +940,10 @@ function isBlocked(v) {
 }
 
 /* ============================== RENDER LIST ============================== */
+// "Vertical" = short enough to be a Short (our orientation proxy; YouTube has no orientation field).
+function isVert(v) { return v.duration > 0 && v.duration <= (data.prefs.verticalMaxSec || 60); }
 function visibleList(items, applyHideShorts=true) {
-  return items.filter(v => !isBlocked(v) && !(applyHideShorts && data.prefs.hideShorts && v.isShort));
+  return items.filter(v => !isBlocked(v) && !(applyHideShorts && data.prefs.hideShorts && isVert(v)));
 }
 
 function rerenderFilter() {
@@ -953,8 +959,8 @@ function rerenderFilter() {
   if (homeSub === 'channels') { renderChannelsSub(); return; }
 
   const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
-  const videos = allowed.filter(v => !v.isShort);
-  const shorts = allowed.filter(v => v.isShort);
+  const videos = allowed.filter(v => !isVert(v));
+  const shorts = allowed.filter(v => isVert(v));
   const shown = homeSub==='shorts' ? shorts : videos;
 
   // reflect counts on the sub-tabs
@@ -1056,9 +1062,9 @@ function card(v) {
   const el = document.createElement('div');
   el.className = 'card';
   el.innerHTML = `
-    <div class="thumb${v.isShort ? ' portrait' : ''}">
+    <div class="thumb${isVert(v) ? ' portrait' : ''}">
       <img loading="lazy" src="${v.thumb}" alt="">
-      ${v.isShort ? '<span class="badge short">📱 VERTICAL</span>' : ''}
+      ${isVert(v) ? '<span class="badge short">📱 VERTICAL</span>' : ''}
       ${v.live==='live' ? '<span class="badge live">● LIVE</span>' : (v.live==='upcoming' ? '<span class="badge live">UPCOMING</span>' : '')}
       ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
     </div>
@@ -1376,7 +1382,7 @@ function renderTab() {
   if (hideShorts || homeSub==='channels') homeSub = 'videos'; // no Channels sub-tab on library tabs
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
-  const videos = all.filter(v => !v.isShort), shorts = all.filter(v => v.isShort);
+  const videos = all.filter(v => !isVert(v)), shorts = all.filter(v => isVert(v));
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `📱 Vertical (${shorts.length})`;
   const shown = homeSub==='shorts' ? shorts : videos;
@@ -1392,8 +1398,8 @@ let playing = null;
 let shortsQueue = [], shortsIndex = -1;
 let videoQueue = [], videoIndex = -1;   // for "Play all" / autoplay-next on normal videos
 function play(v) {
-  if (v.isShort) buildShortsQueue(v);   // short → swipe queue
-  else buildVideoQueue(v);              // normal → autoplay queue
+  if (isVert(v)) buildShortsQueue(v);   // vertical → swipe queue
+  else buildVideoQueue(v);              // horizontal → autoplay queue
   openPlayer(v, false);
 }
 function buildVideoQueue(v) {
@@ -1401,7 +1407,7 @@ function buildVideoQueue(v) {
   if (channelView) src = channelVideos;
   else if (currentTab === 'search') src = lastResults;
   else src = ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
-  const vids = visibleList(src, false).filter(x => !x.isShort && !isBlocked(x));
+  const vids = visibleList(src, false).filter(x => !isVert(x) && !isBlocked(x));
   videoQueue = vids.length ? vids : [v];
   videoIndex = Math.max(0, videoQueue.findIndex(x => x.id === v.id));
 }
@@ -1415,7 +1421,7 @@ function playAll() {
   if (channelView) list = channelVideos.filter(v => !isBlocked(v));
   else if (currentTab === 'search') list = visibleList(lastResults, false).filter(v => !isBlocked(v));
   else list = visibleList(({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []), false);
-  list = (list||[]).filter(v => homeSub==='shorts' ? v.isShort : !v.isShort);
+  list = (list||[]).filter(v => homeSub==='shorts' ? isVert(v) : !isVert(v));
   if (!list.length) { toast('Nothing to play here.'); return; }
   play(list[0]);
 }
@@ -1423,7 +1429,7 @@ let shortPaused = false;
 function buildShortsQueue(v) {
   let src = currentTab === 'search' ? lastResults
     : ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
-  const shorts = visibleList(src, false).filter(x => x.isShort);
+  const shorts = visibleList(src, false).filter(x => isVert(x));
   shortsQueue = shorts.length ? shorts : [v];
   shortsIndex = Math.max(0, shortsQueue.findIndex(x => x.id === v.id));
 }
@@ -1506,7 +1512,7 @@ function svGo(dir) {
 }
 
 function openPlayer(v, restore, replace) {
-  const bucket = v.isShort ? 'shorts' : 'videos';
+  const bucket = isVert(v) ? 'shorts' : 'videos';
   if (!restore) {
     if (budgetLocked(bucket)) {
       renderBudgets();
@@ -1517,10 +1523,10 @@ function openPlayer(v, restore, replace) {
   }
   playing = v;
   fillMeta(v);
-  $('modal').classList.toggle('shorts', !!v.isShort);
+  $('modal').classList.toggle('shorts', isVert(v));
   $('modal').classList.remove('sheet-open');
   $('playerDetails').style.display = '';
-  if (v.isShort) {
+  if (isVert(v)) {
     const old = $('iframe'); if (old) old.src = '';        // stop the normal player
     if (!shortsQueue.length || (shortsQueue[shortsIndex] && shortsQueue[shortsIndex].id !== v.id)) buildShortsQueue(v);
     buildCarousel();
@@ -1537,7 +1543,7 @@ function openPlayer(v, restore, replace) {
     frame.insertBefore(ifr, frame.firstChild);
   }
   $('modal').classList.add('open');
-  if (v.isShort) requestAnimationFrame(() => { svSetTransition(false); svMove(-svH()); }); // recentre once laid out
+  if (isVert(v)) requestAnimationFrame(() => { svSetTransition(false); svMove(-svH()); }); // recentre once laid out
   const pl = document.querySelector('.player'); if (pl) pl.scrollTop = 0;
   if (replace) history.replaceState(navSnapshot(), '');
   else if (!restore) pushNav();
@@ -1775,6 +1781,7 @@ function softRefresh() {
   renderPoolStat();
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
+  $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
