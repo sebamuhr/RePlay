@@ -79,6 +79,19 @@
   .chan-card img, .chan-card .av { width:64px; height:64px; border-radius:50%; object-fit:cover; }
   .chan-card .av { background:#222; display:flex; align-items:center; justify-content:center; font-size:26px; color:#888; }
   .chan-card .nm { font-size:13px; line-height:1.3; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  /* channel search list */
+  .grid.chsearch { display:block; }
+  .chrow { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:10px;
+    display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; }
+  .chrow img.cav, .chrow .cav { width:56px; height:56px; border-radius:50%; object-fit:cover; }
+  .chrow .cav { background:#222; display:flex; align-items:center; justify-content:center; font-size:22px; color:#888; }
+  .chrow .chname { font-size:15px; font-weight:600; cursor:pointer; }
+  .chrow .chname.followed { color:var(--blue); }
+  .chrow .chdesc { color:var(--muted); font-size:12px; line-height:1.45; margin-top:3px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .chrow .chacts { display:flex; gap:6px; align-items:center; }
+  .chrow .chexpand { width:34px; height:34px; border-radius:50%; padding:0; font-size:13px; }
+  .chrow .chvideos { grid-column:1/-1; display:none; gap:10px; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); margin-top:6px; }
+  .chrow.expanded .chvideos { display:grid; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; transition:border-color .12s; display:flex; flex-direction:column; }
   .card:hover { border-color:#444; }
   .thumb { position:relative; aspect-ratio:16/9; background:#000; cursor:pointer; }
@@ -238,6 +251,7 @@
   <div class="subtabs" id="homeSubtabs">
     <button class="subtab active" data-sub="videos">🎬 Videos</button>
     <button class="subtab" data-sub="shorts">🩳 Shorts</button>
+    <button class="subtab" data-sub="channels">📺 Channels</button>
   </div>
 
   <div class="chips" id="activeFilters"></div>
@@ -700,7 +714,7 @@ function addFilter(t) {
   if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
   setTab('search'); // local feed, free
   pushNav();
-  if (!lastResults.length && secrets.apiKey) findMore(); // nothing saved matches → fetch fresh from YouTube
+  if (!lastResults.length && secrets.apiKey && homeSub!=='channels') findMore(); // nothing saved matches → fetch fresh from YouTube
 }
 function removeFilter(t) {
   activeFilters = activeFilters.filter(x => x !== t);
@@ -926,11 +940,12 @@ function rerenderFilter() {
   if (currentTab !== 'search') return renderTab();
   renderChannelBanner();
   const hideShorts = data.prefs.hideShorts;
-  if (hideShorts) homeSub = 'videos';
+  if (hideShorts && homeSub === 'shorts') homeSub = 'videos';
   // sub-tab visibility: Shorts hidden entirely if pref set
   $('homeSubtabs').style.display = 'flex';
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
+  if (homeSub === 'channels') { renderChannelsSub(); return; }
 
   const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
   const videos = allowed.filter(v => !v.isShort);
@@ -941,8 +956,7 @@ function rerenderFilter() {
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
 
-  $('grid').classList.remove('changrid');
-  $('grid').classList.toggle('shortsgrid', homeSub==='shorts');
+  $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
   if (!channelView) { // Find-more (quota) only on the normal feed, not in a channel view
     const wrap = document.createElement('div');
@@ -958,6 +972,72 @@ function rerenderFilter() {
      (channelView ? 'No videos found for this channel.' :
       (activeFilters.length ? 'Nothing saved matches these filters — tap “🔍 Find more on YouTube”.' :
        (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
+}
+
+/* ---- Channels sub-tab: search for channels (or show your followed ones) ---- */
+let channelResults = [], channelQuery = '';
+async function renderChannelsSub() {
+  const grid = $('grid'); grid.className = 'grid chsearch';
+  if (activeFilters.length) {
+    const q = activeFilters.join(' ');
+    if (q !== channelQuery) {
+      if (!secrets.apiKey) { $('panel').classList.add('open'); grid.innerHTML=''; flash(''); $('empty').textContent='Add your API key to search channels.'; return; }
+      flash('Searching channels…'); grid.innerHTML=''; $('empty').textContent='';
+      try {
+        const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
+        if (res.error) throw new Error(res.error.message);
+        channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
+        channelQuery = q;
+      } catch (e) { flash(apiErr(e)); return; }
+    }
+    renderChannelCards(channelResults);
+    flash(`<b>${channelResults.length}</b> channels for “${escapeHtml(activeFilters.join(' '))}”`, true);
+    $('empty').textContent = channelResults.length ? '' : 'No channels found.';
+  } else {
+    const list = (data.followed||[]).map(c => ({ id:c.id, title:c.title, description:'', thumb:(c.thumb&&c.thumb!=='none')?c.thumb:'' }));
+    renderChannelCards(list);
+    flash(`<b>${list.length}</b> followed channels`, true);
+    $('empty').textContent = list.length ? '' : 'Type a name in the search bar to find channels, or follow some from videos.';
+  }
+}
+function renderChannelCards(list) {
+  const grid = $('grid'); grid.innerHTML = '';
+  list.forEach(c => {
+    const row = document.createElement('div'); row.className = 'chrow';
+    const followed = isFollowed(c.id), hasAv = c.thumb && c.thumb!=='none';
+    const av = hasAv ? `<img class="cav" loading="lazy" src="${c.thumb}" alt="">` : `<div class="cav">${escapeHtml((c.title||'?').slice(0,1).toUpperCase())}</div>`;
+    row.innerHTML = `
+      ${av}
+      <div class="chmeta">
+        <div class="chname${followed?' followed':''}">${escapeHtml(c.title||c.id)}</div>
+        ${c.description ? `<div class="chdesc">${escapeHtml(c.description)}</div>` : ''}
+      </div>
+      <div class="chacts">
+        <button class="chfollow">${followed?'👍 Following':'👍 Follow'}</button>
+        <button class="chexpand" title="Preview videos">‹</button>
+      </div>
+      <div class="chvideos"></div>`;
+    row.querySelector('.cav').onclick = () => openChannel(c.id, c.title);
+    row.querySelector('.chname').onclick = () => openChannel(c.id, c.title);
+    row.querySelector('.chfollow').onclick = () => { if (isFollowed(c.id)) unfollowChannel(c.id); else followChannel({ channelId:c.id, channel:c.title, id:'' }); };
+    row.querySelector('.chexpand').onclick = () => expandChannelRow(row, c.id);
+    grid.appendChild(row);
+  });
+}
+async function expandChannelRow(row, id) {
+  const box = row.querySelector('.chvideos');
+  const open = row.classList.toggle('expanded');
+  row.querySelector('.chexpand').textContent = open ? '›' : '‹';
+  if (!open || box.dataset.loaded) return;
+  if (!secrets.apiKey) { box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px">Add your API key to preview.</div>'; return; }
+  box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px">Loading…</div>';
+  try {
+    const d = await (await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=6&playlistId=${uploadsPlaylist(id)}&key=${secrets.apiKey}`)).json();
+    if (d.error) throw new Error(d.error.message);
+    const vids = await fetchVideos((d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean));
+    box.innerHTML = ''; box.dataset.loaded = '1';
+    vids.forEach(v => { const c = document.createElement('div'); c.className='rel-card'; c.innerHTML=`<img loading="lazy" src="${v.thumb}" alt=""><div class="rt">${escapeHtml(v.title)}</div>`; c.onclick=()=>play(v); box.appendChild(c); });
+  } catch (e) { box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px">'+escapeHtml(apiErr(e))+'</div>'; }
 }
 
 function renderCards(list) {
@@ -1288,14 +1368,14 @@ function renderTab() {
   const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
   const all = visibleList(map[currentTab], false); // keep both kinds; we split below
   const hideShorts = data.prefs.hideShorts;
-  if (hideShorts) homeSub = 'videos';
+  if (hideShorts || homeSub==='channels') homeSub = 'videos'; // no Channels sub-tab on library tabs
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   const videos = all.filter(v => !v.isShort), shorts = all.filter(v => v.isShort);
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
   const shown = homeSub==='shorts' ? shorts : videos;
-  $('grid').classList.toggle('shortsgrid', homeSub==='shorts');
+  $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
   const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
   flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'} in ${titles[currentTab]}${extra}`, true);
