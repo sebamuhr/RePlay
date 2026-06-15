@@ -1451,10 +1451,14 @@ function svIframe(v, autoplay) {
   ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=0&enablejsapi=1&autoplay=${autoplay?1:0}${origin}`;
   return ifr;
 }
-function svFill(slide, v, autoplay) {
+function svFill(slide, v, withIframe) {
   slide._vid = v ? v.id : null; slide.innerHTML = '';
   slide.style.backgroundImage = v ? `url(${v.thumb})` : '';
-  if (v) slide.appendChild(svIframe(v, autoplay));
+  if (v && withIframe) { // only the CURRENT slide gets a live player (neighbours stay thumbnails → smooth)
+    const ifr = svIframe(v, true);
+    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .2s'; ifr.onload = () => { ifr.style.opacity = '1'; };
+    slide.appendChild(ifr);
+  }
 }
 function svCmd(slide, func) { const f = slide && slide.querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
 function svSetTransition(on) { $('svTrack').style.transition = on ? 'transform .28s ease' : 'none'; }
@@ -1484,10 +1488,12 @@ function svGo(dir) {
     if (finished) return; finished = true;
     track.removeEventListener('transitionend', done);
     shortsIndex += dir;
-    if (dir>0) { const a = svSlides.shift(); svSlides.push(a); track.appendChild(a); svFill(a, shortsQueue[shortsIndex+1], false); }
-    else       { const c = svSlides.pop();   svSlides.unshift(c); track.insertBefore(c, track.firstChild); svFill(c, shortsQueue[shortsIndex-1], false); }
-    svSetTransition(false); svMove(-svH());                       // recentre on the new current (no reload of it)
-    svCmd(svSlides[1],'playVideo'); svCmd(svSlides[0],'pauseVideo'); svCmd(svSlides[2],'pauseVideo');
+    if (dir>0) { const a = svSlides.shift(); svSlides.push(a); track.appendChild(a); }
+    else       { const c = svSlides.pop();   svSlides.unshift(c); track.insertBefore(c, track.firstChild); }
+    svSetTransition(false); svMove(-svH());                       // recentre on the new current
+    svFill(svSlides[0], shortsQueue[shortsIndex-1], false);       // neighbours = thumbnails
+    svFill(svSlides[1], shortsQueue[shortsIndex], true);          // current = the only live player
+    svFill(svSlides[2], shortsQueue[shortsIndex+1], false);
     shortPaused = false;
     const v = shortsQueue[shortsIndex];
     playing = v; budgetRecord('shorts'); addHistory(v); renderBudgets(); fillMeta(v); history.replaceState(navSnapshot(), '');
