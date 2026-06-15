@@ -897,6 +897,7 @@ function renderChannelBanner() {
 // The ONLY thing that spends quota: fetch fresh videos into the pool.
 // order='date' (⟳) = newest uploads; default = more relevant results.
 async function findMore(order) {
+  if (typeof order !== 'string') order = undefined; // ignore stray event objects
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key first ⚙'); return; }
   const btn = $('loadMore'); if (btn) { btn.disabled = true; btn.textContent = order ? 'Checking for new…' : 'Searching YouTube…'; }
   try {
@@ -967,7 +968,7 @@ function rerenderFilter() {
     wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:14px';
     const b = document.createElement('button');
     b.id = 'loadMore'; b.className = 'primary'; b.textContent = '🔍 Find more on YouTube';
-    b.onclick = findMore;
+    b.onclick = () => findMore();
     wrap.appendChild(b); $('grid').appendChild(wrap);
   }
   flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}${channelView?' from this channel':' in your feed'}`, true);
