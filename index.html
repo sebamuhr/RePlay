@@ -112,6 +112,7 @@
   .actions button.orient .ph { display:inline-block; transition:transform .15s; }
   .actions button.orient.horiz .ph { transform:rotate(90deg); } /* phone laid on its side = horizontal */
   .actions button.orient.counting { color:var(--accent); border-color:var(--accent); font-weight:700; min-width:30px; } /* 3·2·1 countdown */
+  .actions button.music.on { background:rgba(106,176,255,.16); border-color:var(--blue); } /* marked as Music */
   .actions button.remove { color:#ff9a9a; border-color:#3a1d1d; }
   .actions button.remove:hover { border-color:var(--accent); }
 
@@ -256,6 +257,7 @@
       <button class="tab" data-tab="later">Watch Later</button>
       <button class="tab" data-tab="favorites">Favorites</button>
       <button class="tab" data-tab="channels">Channels</button>
+      <button class="tab" data-tab="music">Music</button>
       <button class="tab" id="refreshBtn" title="Refresh feed">⟳</button>
     </div>
     <div class="statusbar">
@@ -397,6 +399,7 @@ function defaultData() {
     history: [],          // [{...video, ts}]
     watchLater: [],
     favorites: [],
+    music: [],            // videos you marked as music — its own tab
     pool: [],             // discovered videos (the browsable feed) — synced
     tracked: [],          // auto-tracked channels ("fake follow") — synced
     hidden: {},           // videoId -> ts ("not interested", hidden forever)
@@ -416,7 +419,7 @@ function defaultData() {
       updatedAt: 0,
     },
     budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
-    deleted: { history:{}, watchLater:{}, favorites:{} }, // tombstones for by-id lists
+    deleted: { history:{}, watchLater:{}, favorites:{}, music:{} }, // tombstones for by-id lists
     orient: {},           // videoId -> { o:'vert'|'horiz', ts } — manual orientation override
     updatedAt: 0,
   };
@@ -438,6 +441,7 @@ data.hiddenChannels = data.hiddenChannels || [];
 data.pool = data.pool || [];
 data.tracked = data.tracked || [];
 data.orient = data.orient || {};
+data.music = data.music || [];
 
 // Pool (browsable feed) + auto-tracked channels now live in the synced data.
 // (migrate any old device-local copies on first run)
@@ -1167,6 +1171,7 @@ function renderCards(list) {
 function card(v) {
   const inLater = data.watchLater.some(x=>x.id===v.id);
   const inFav = data.favorites.some(x=>x.id===v.id);
+  const inMusic = data.music.some(x=>x.id===v.id);
   const el = document.createElement('div');
   el.className = 'card';
   el.innerHTML = `
@@ -1183,6 +1188,7 @@ function card(v) {
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
         <button class="orient${isVert(v)?'':' horiz'}" title="${isVert(v)?'Vertical — click to mark as Horizontal':'Horizontal — click to mark as Vertical'}"><span class="ph">📱</span></button>
+        <button class="music ${inMusic?'on':''}" title="${inMusic?'In Music — click to remove':'Mark as Music'}">🎵</button>
         ${currentTab==='search' ? '<button class="hide" title="Not interested — hide this video">🚫</button>' : ''}
         ${currentTab!=='search' ? '<button class="remove">✕ Remove</button>' : ''}
         ${v.publishedAt ? `<span class="when">${timeAgo(v.publishedAt)}</span>` : ''}
@@ -1194,6 +1200,7 @@ function card(v) {
   if (cl) cl.onclick = (e) => { e.stopPropagation(); e.preventDefault(); openChannel(v.channelId, v.channel); };
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
+  el.querySelector('.music').onclick = (e) => { e.stopPropagation(); toggleList('music', v); };
   const orientBtn = el.querySelector('.orient');
   let orientTimer = null;
   orientBtn.onclick = (e) => {
@@ -1221,7 +1228,7 @@ function card(v) {
   if (rm) rm.onclick = (e) => { e.stopPropagation(); removeFromList(TAB_LIST[currentTab], v.id); };
   return el;
 }
-const TAB_LIST = { history:'history', later:'watchLater', favorites:'favorites' };
+const TAB_LIST = { history:'history', later:'watchLater', favorites:'favorites', music:'music' };
 function removeFromList(listName, id) {
   data[listName] = data[listName].filter(x => x.id !== id);
   data.deleted[listName][id] = Date.now();  // tombstone so sync won't resurrect it
@@ -1505,8 +1512,8 @@ function renderTab() {
   if (currentTab==='search') { rerenderFilter(); return; }
   if (currentTab==='channels') { renderChannelsTab(); return; }
   $('grid').classList.remove('changrid');
-  const map = { history:data.history, later:data.watchLater, favorites:data.favorites };
-  const titles = { history:'History', later:'Watch Later', favorites:'Favorites' };
+  const map = { history:data.history, later:data.watchLater, favorites:data.favorites, music:data.music };
+  const titles = { history:'History', later:'Watch Later', favorites:'Favorites', music:'Music' };
   const all = visibleList(map[currentTab], false); // keep both kinds; we split below
   const hideShorts = data.prefs.hideShorts;
   if (hideShorts || homeSub==='channels') homeSub = 'videos'; // no Channels sub-tab on library tabs
@@ -1537,7 +1544,7 @@ function buildVideoQueue(v) {
   let src;
   if (channelView) src = channelVideos;
   else if (currentTab === 'search') src = lastResults;
-  else src = ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
+  else src = ({ history:data.history, later:data.watchLater, favorites:data.favorites, music:data.music }[currentTab] || []);
   const vids = visibleList(src, false).filter(x => !isVert(x) && !isBlocked(x));
   videoQueue = vids.length ? vids : [v];
   videoIndex = Math.max(0, videoQueue.findIndex(x => x.id === v.id));
@@ -1551,7 +1558,7 @@ function playAll() {
   let list;
   if (channelView) list = channelVideos.filter(v => !isBlocked(v));
   else if (currentTab === 'search') list = visibleList(lastResults, false).filter(v => !isBlocked(v));
-  else list = visibleList(({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []), false);
+  else list = visibleList(({ history:data.history, later:data.watchLater, favorites:data.favorites, music:data.music }[currentTab] || []), false);
   list = (list||[]).filter(v => homeSub==='shorts' ? isVert(v) : !isVert(v));
   if (!list.length) { toast('Nothing to play here.'); return; }
   play(list[0]);
@@ -1559,7 +1566,7 @@ function playAll() {
 let shortPaused = false;
 function buildShortsQueue(v) {
   let src = currentTab === 'search' ? lastResults
-    : ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
+    : ({ history:data.history, later:data.watchLater, favorites:data.favorites, music:data.music }[currentTab] || []);
   const shorts = visibleList(src, false).filter(x => isVert(x));
   shortsQueue = shorts.length ? shorts : [v];
   shortsIndex = Math.max(0, shortsQueue.findIndex(x => x.id === v.id));
@@ -1822,7 +1829,7 @@ function mergeById(a,b,tomb){
 }
 function mergeTomb(a,b){
   const out={};
-  ['history','watchLater','favorites'].forEach(k=>{
+  ['history','watchLater','favorites','music'].forEach(k=>{
     const m={...(a?.[k]||{})};
     Object.entries(b?.[k]||{}).forEach(([id,ts])=>{ if(m[id]==null || ts>m[id]) m[id]=ts; });
     out[k]=m;
@@ -1857,6 +1864,7 @@ function mergeData(local, remote) {
   m.history = mergeById(local.history, remote.history, m.deleted.history).slice(0,2000);
   m.watchLater = mergeById(local.watchLater, remote.watchLater, m.deleted.watchLater);
   m.favorites = mergeById(local.favorites, remote.favorites, m.deleted.favorites);
+  m.music = mergeById(local.music, remote.music, m.deleted.music);
   m.prefs = (remote.prefs?.updatedAt||0) > (local.prefs?.updatedAt||0) ? remote.prefs : local.prefs;
   m.budgetState = mergeBudget(local.budgetState, remote.budgetState);
   // hidden videos: union of maps, keep newest ts
