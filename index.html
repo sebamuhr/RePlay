@@ -227,13 +227,16 @@
   .playall { margin-left:auto; background:var(--card); border:1px solid var(--line); color:var(--fg); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
   .playall:hover { border-color:#444; }
 
-  /* Blackout overlay — dark the screen while audio keeps playing; only offered on small screens */
-  #blackoutBtn { display:none; }
+  /* Blackout overlay — dark the screen while audio keeps playing. The 🌙 lives in the player so you
+     can start a video first, then dark the screen. Only offered on small screens. */
+  #playerMoon { display:none; position:fixed; top:14px; left:14px; z-index:70; width:40px; height:40px; border-radius:50%;
+    background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.35); padding:0; cursor:pointer; font-size:18px; line-height:1;
+    align-items:center; justify-content:center; }
   #blackout { display:none; position:fixed; inset:0; background:#000; z-index:99999; touch-action:none; }
   #blackout.on { display:block; }
   #blackoutClose { position:absolute; top:14px; right:14px; width:40px; height:40px; padding:0; border-radius:50%;
     background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); color:rgba(255,255,255,.35); font-size:16px; line-height:1; }
-  @media (max-width:640px) { #blackoutBtn { display:inline-block; } }
+  @media (max-width:640px) { .modal.open #playerMoon { display:flex; } }
 </style>
 </head>
 <body>
@@ -245,7 +248,6 @@
       <div id="sugBox" class="sugbox"></div>
     </div>
     <button class="primary" id="searchBtn">Add</button>
-    <button class="icon-btn" id="blackoutBtn" title="Blackout — dark the screen, keep playing">🌙</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
     <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
@@ -350,6 +352,7 @@
 <!-- PLAYER -->
 <div class="modal" id="modal">
   <button id="playerClose" type="button" title="Close"></button>
+  <button id="playerMoon" type="button" title="Blackout — dark the screen, keep playing">🌙</button>
   <div class="player">
     <div class="frame" id="frame">
       <div id="svTrack"></div>
@@ -553,7 +556,7 @@ async function requestWake() { try { if ('wakeLock' in navigator) wakeLock = awa
 function releaseWake() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
 function openBlackout() { $('blackout').classList.add('on'); requestWake(); }   // keep the screen awake (black) so it won't auto-lock & pause
 function closeBlackout() { $('blackout').classList.remove('on'); releaseWake(); }
-$('blackoutBtn').onclick = openBlackout;
+$('playerMoon').onclick = openBlackout;
 $('blackoutClose').onclick = (e) => { e.stopPropagation(); closeBlackout(); };
 $('blackout').addEventListener('touchmove', e => e.preventDefault(), { passive:false }); // nothing scrolls behind the dark
 document.addEventListener('visibilitychange', () => { if (document.visibilityState==='visible' && $('blackout').classList.contains('on')) requestWake(); });
