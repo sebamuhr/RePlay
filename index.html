@@ -154,7 +154,7 @@
   .modal.shorts .frame { width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
   .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
   #svTrack { display:none; }
-  .modal.shorts #svTrack { display:block; position:absolute; left:0; top:0; width:100%; z-index:2; will-change:transform; }
+  .modal.shorts #svTrack { display:block; position:absolute; left:0; top:0; width:100%; z-index:2; }
   .modal.shorts #iframe { display:none; }
   .sv-slide { width:100%; height:100dvh; position:relative; background:#000 center/cover no-repeat; }
   .sv-slide iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
@@ -1554,7 +1554,14 @@ function svFill(slide, v, withIframe) {
   }
 }
 function svCmd(slide, func) { const f = slide && slide.querySelector('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
-function svSetTransition(on) { $('svTrack').style.transition = on ? 'transform .28s ease' : 'none'; }
+function svSetTransition(on) {
+  const t = $('svTrack');
+  t.style.transition = on ? 'transform .28s ease' : 'none';
+  // Only promote the track to its own compositor layer WHILE sliding. Leaving will-change on
+  // permanently keeps the video iframe off the native hardware-overlay path → picture stutters
+  // (audio is fine) during steady playback. Releasing it between swipes restores smooth video.
+  t.style.willChange = on ? 'transform' : 'auto';
+}
 function svMove(px) { $('svTrack').style.transform = `translateY(${px}px)`; }
 function buildCarousel() {
   const track = $('svTrack'); track.innerHTML = '';
