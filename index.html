@@ -992,20 +992,44 @@ let channelResults = [], channelQuery = '';
 async function renderChannelsSub() {
   const grid = $('grid'); grid.className = 'grid chsearch';
   if (activeFilters.length) {
-    const q = activeFilters.join(' ');
-    if (q !== channelQuery) {
-      if (!secrets.apiKey) { $('panel').classList.add('open'); grid.innerHTML=''; flash(''); $('empty').textContent='Add your API key to search channels.'; return; }
-      flash('Searching channels…'); grid.innerHTML=''; $('empty').textContent='';
-      try {
-        const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
-        if (res.error) throw new Error(res.error.message);
-        channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
-        channelQuery = q;
-      } catch (e) { flash(apiErr(e)); return; }
+    const q = activeFilters.join(' ').trim();
+    const ql = q.toLowerCase();
+
+    // 1) YOUR channels first — followed + auto-tracked + every channel seen in your pool.
+    //    Matched locally by name, so a channel you follow can NEVER be hidden and results
+    //    don't shuffle. This is instant and free (no API call).
+    const localById = new Map();
+    const addLocal = (id, title, thumb) => {
+      if (!id || localById.has(id)) return;
+      if (!(title||'').toLowerCase().includes(ql) && id.toLowerCase() !== ql) return;
+      localById.set(id, { id, title: title || id, description:'', thumb: (thumb && thumb !== 'none') ? thumb : '' });
+    };
+    (data.followed || []).forEach(c => addLocal(c.id, c.title, c.thumb));
+    (tracked || []).forEach(c => addLocal(c.id, c.title, c.thumb));
+    pool.forEach(v => addLocal(v.channelId, v.channel));
+    const localList = Array.from(localById.values());
+
+    // 2) Then YouTube's own results (cached per query), minus any we already showed.
+    let apiList = [];
+    if (secrets.apiKey) {
+      if (q !== channelQuery) {
+        flash('Searching channels…');
+        try {
+          const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
+          if (res.error) throw new Error(res.error.message);
+          channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:it.snippet.title, description:it.snippet.description||'', thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
+          channelQuery = q;
+        } catch (e) { channelResults = []; channelQuery = ''; flash(apiErr(e)); } // keep showing YOUR channels even if the API fails
+      }
+      apiList = (channelResults || []).filter(c => !localById.has(c.id));
     }
-    renderChannelCards(channelResults);
-    flash(`<b>${channelResults.length}</b> channels for “${escapeHtml(activeFilters.join(' '))}”`, true);
-    $('empty').textContent = channelResults.length ? '' : 'No channels found.';
+
+    const list = localList.concat(apiList);
+    renderChannelCards(list);
+    const yours = localList.length ? ` <span style="color:var(--muted)">· ${localList.length} of yours</span>` : '';
+    flash(`<b>${list.length}</b> channels for “${escapeHtml(q)}”${yours}`, true);
+    $('empty').textContent = list.length ? '' :
+      (secrets.apiKey ? 'No channels found.' : 'No match in your channels — add your API key to search all of YouTube.');
   } else {
     const list = (data.followed||[]).map(c => ({ id:c.id, title:c.title, description:'', thumb:(c.thumb&&c.thumb!=='none')?c.thumb:'' }));
     renderChannelCards(list);
