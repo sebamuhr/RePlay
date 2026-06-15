@@ -749,7 +749,7 @@ $('q').addEventListener('keydown', e => {
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 async function searchPage(query, pageToken, order) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=25&q=${encodeURIComponent(query)}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
   const d = await (await fetch(url)).json();
   if (d.error) throw new Error(d.error.message || 'API error');
   return { ids: (d.items||[]).map(i => i.id.videoId).filter(Boolean), next: d.nextPageToken || null };
@@ -826,10 +826,10 @@ function showFeed() {
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
     if (activeFilters.length) {
-      const terms = activeFilters.map(t => t.toLowerCase());
+      const words = activeFilters.join(' ').toLowerCase().split(/\s+/).filter(Boolean); // word-match (all words must appear)
       items = items.filter(v => {
         const hay = (v.title + ' ' + v.channel + ' ' + (v.tags||[]).join(' ') + ' ' + (v.description||'')).toLowerCase();
-        return terms.every(t => hay.includes(t));
+        return words.every(w => hay.includes(w));
       });
     }
     items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
@@ -1865,7 +1865,10 @@ $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFi
     try { const remote = await pullSync(); if (remote){ data = mergeData(data, remote); saveData({touch:false,sync:false}); refreshAll(); setSyncState('synced ✓'); } }
     catch(e){ setSyncState('offline', true); }
   }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!window.__rlReloaded) { window.__rlReloaded = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js').then(reg => { reg.update(); }).catch(()=>{});
+  }
   if (secrets.apiKey && data.followed.length) { // light the LED on startup, throttled (you may have many subs)
     const last = +readJSON('replay.ledAt', 0);
     if (Date.now() - last > 6*3600e3) { writeJSON('replay.ledAt', Date.now()); checkChannels(); } else renderLed();
