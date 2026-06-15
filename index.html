@@ -251,8 +251,8 @@
   </div>
 
   <div class="subtabs" id="homeSubtabs">
-    <button class="subtab active" data-sub="videos">🎬 Videos</button>
-    <button class="subtab" data-sub="shorts">🩳 Shorts</button>
+    <button class="subtab active" data-sub="videos">🖥 Horizontal</button>
+    <button class="subtab" data-sub="shorts">📱 Vertical</button>
     <button class="subtab" data-sub="channels">📺 Channels</button>
     <button id="playAllBtn" class="playall" title="Play all (autoplay through the list)">▶ Play all</button>
   </div>
@@ -301,9 +301,9 @@
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
 
     <hr class="hr">
-    <h3>Shorts</h3>
-    <p>Anything under 60 seconds is a Short. They live in their own sub-tab on Home.</p>
-    <label class="switch"><input type="checkbox" id="hideShorts"> Hide Shorts entirely (no Shorts sub-tab)</label>
+    <h3>Vertical videos</h3>
+    <p>Anything under 60 seconds is treated as vertical (Shorts) — YouTube's API doesn't expose true orientation, so duration is the proxy. They get the portrait full-screen player.</p>
+    <label class="switch"><input type="checkbox" id="hideShorts"> Hide vertical videos (no Vertical sub-tab)</label>
 
     <h3>Watch budgets <span style="color:var(--muted);font-weight:400">— watch X, then wait Y. Resets after Y of not watching.</span></h3>
     <div id="budgetPrefs"></div>
@@ -958,8 +958,8 @@ function rerenderFilter() {
   const shown = homeSub==='shorts' ? shorts : videos;
 
   // reflect counts on the sub-tabs
-  document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
-  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
+  document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
+  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `📱 Vertical (${shorts.length})`;
 
   $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
@@ -971,7 +971,7 @@ function rerenderFilter() {
     b.onclick = () => findMore();
     wrap.appendChild(b); $('grid').appendChild(wrap);
   }
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'}${channelView?' from this channel':' in your feed'}`, true);
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'}${channelView?' from this channel':' in your feed'}`, true);
   $('empty').textContent = shown.length ? '' :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
      (channelView ? 'No videos found for this channel.' :
@@ -1058,7 +1058,7 @@ function card(v) {
   el.innerHTML = `
     <div class="thumb${v.isShort ? ' portrait' : ''}">
       <img loading="lazy" src="${v.thumb}" alt="">
-      ${v.isShort ? '<span class="badge short">SHORT</span>' : ''}
+      ${v.isShort ? '<span class="badge short">📱 VERTICAL</span>' : ''}
       ${v.live==='live' ? '<span class="badge live">● LIVE</span>' : (v.live==='upcoming' ? '<span class="badge live">UPCOMING</span>' : '')}
       ${v.duration ? `<span class="badge">${fmtDuration(v.duration)}</span>` : ''}
     </div>
@@ -1377,13 +1377,13 @@ function renderTab() {
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   const videos = all.filter(v => !v.isShort), shorts = all.filter(v => v.isShort);
-  document.querySelector('.subtab[data-sub="videos"]').textContent = `🎬 Videos (${videos.length})`;
-  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `🩳 Shorts (${shorts.length})`;
+  document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
+  if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `📱 Vertical (${shorts.length})`;
   const shown = homeSub==='shorts' ? shorts : videos;
   $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
   const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'shorts':'videos'} in ${titles[currentTab]}${extra}`, true);
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'} in ${titles[currentTab]}${extra}`, true);
   $('empty').textContent = shown.length ? '' : `No ${homeSub} in ${titles[currentTab]} yet.`;
 }
 
