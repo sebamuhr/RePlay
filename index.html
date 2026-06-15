@@ -236,6 +236,12 @@
   #blackout.on { display:block; }
   #blackoutClose { position:absolute; top:14px; right:14px; width:40px; height:40px; padding:0; border-radius:50%;
     background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); color:rgba(255,255,255,.35); font-size:16px; line-height:1; }
+  /* Dim playback controls — kept faint so the screen still reads as "off" in your pocket */
+  #boControls { position:absolute; left:50%; bottom:48px; transform:translateX(-50%); display:flex; gap:24px; align-items:center; }
+  #boControls button { width:62px; height:62px; padding:0; border-radius:50%; line-height:1; font-size:22px;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); color:rgba(255,255,255,.4); }
+  #boControls #boPlay { width:74px; height:74px; font-size:26px; }
+  #boControls button:active { background:rgba(255,255,255,.14); color:rgba(255,255,255,.7); }
   @media (max-width:640px) { .modal.open #playerMoon { display:flex; } }
 </style>
 </head>
@@ -386,7 +392,14 @@
 <div class="toast" id="toast"></div>
 
 <!-- Blackout: a full-screen dark window. Audio/playback keeps running underneath; a small ✕ closes it. -->
-<div id="blackout"><button id="blackoutClose" type="button" title="Close blackout">✕</button></div>
+<div id="blackout">
+  <div id="boControls">
+    <button id="boPrev" type="button" title="Previous">⏮</button>
+    <button id="boPlay" type="button" title="Play / Pause">⏸</button>
+    <button id="boNext" type="button" title="Next">⏭</button>
+  </div>
+  <button id="blackoutClose" type="button" title="Close blackout">✕</button>
+</div>
 
 <script>
 /* ============================== STORAGE ============================== */
@@ -575,10 +588,30 @@ function exitFullscreen() {
   const fn = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
   if (fn && fsEl) { try { const r = fn.call(document); r && r.catch && r.catch(()=>{}); } catch {} }
 }
-function openBlackout() { const b = $('blackout'); b.classList.add('on'); requestWake(); enterFullscreen(b); } // awake + immersive + black
+function openBlackout() { const b = $('blackout'); b.classList.add('on'); requestWake(); enterFullscreen(b); $('boPlay').textContent = '⏸'; } // awake + immersive + black
 function closeBlackout() { $('blackout').classList.remove('on'); releaseWake(); exitFullscreen(); }
 $('playerMoon').onclick = openBlackout;
 $('blackoutClose').onclick = (e) => { e.stopPropagation(); closeBlackout(); };
+
+// Unified playback controls — drive whichever player is live (vertical carousel or horizontal iframe).
+function mediaShorts() { return $('modal').classList.contains('shorts'); }
+function vidCmd(func) { const f = $('iframe'); if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event:'command', func, args:[] }), '*'); }
+let vidPaused = false;
+function mediaPlayPause() {
+  if (mediaShorts()) { svTogglePause(); return shortPaused; }
+  vidPaused = !vidPaused; vidCmd(vidPaused ? 'pauseVideo' : 'playVideo'); return vidPaused;
+}
+function mediaNext() {
+  if (mediaShorts()) { svGo(1); return; }
+  const i = videoIndex + 1; if (i < videoQueue.length) { videoIndex = i; openPlayer(videoQueue[i], false, true); }
+}
+function mediaPrev() {
+  if (mediaShorts()) { svGo(-1); return; }
+  const i = videoIndex - 1; if (i >= 0) { videoIndex = i; openPlayer(videoQueue[i], false, true); }
+}
+$('boPlay').onclick = (e) => { e.stopPropagation(); $('boPlay').textContent = mediaPlayPause() ? '▶' : '⏸'; };
+$('boNext').onclick = (e) => { e.stopPropagation(); mediaNext(); $('boPlay').textContent = '⏸'; };
+$('boPrev').onclick = (e) => { e.stopPropagation(); mediaPrev(); $('boPlay').textContent = '⏸'; };
 $('blackout').addEventListener('touchmove', e => e.preventDefault(), { passive:false }); // nothing scrolls behind the dark
 document.addEventListener('visibilitychange', () => { if (document.visibilityState==='visible' && $('blackout').classList.contains('on')) requestWake(); });
 $('apiKey').value = secrets.apiKey;
@@ -1712,6 +1745,7 @@ function svGo(dir) {
 
 function openPlayer(v, restore, replace) {
   const bucket = isVert(v) ? 'shorts' : 'videos';
+  vidPaused = false; if ($('boPlay')) $('boPlay').textContent = '⏸'; // a freshly opened video is playing
   if (!restore) {
     if (budgetLocked(bucket)) {
       renderBudgets();
