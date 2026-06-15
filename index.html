@@ -1537,19 +1537,22 @@ function openPlayer(v, restore, replace) {
   else if (!restore) pushNav();
 }
 // Related videos pulled from your own pool (free, no API).
+const REL_STOP = new Set(['the','and','for','with','this','that','your','you','how','what','from','are','was','they','will','have','has','its','their','about','into','over','best','video','official']);
+const relKw = w => w.length > 3 && !REL_STOP.has(w);
 function renderRelated(v) {
   const box = $('related'); box.innerHTML = '';
   const watched = new Set(data.history.map(h => h.id));
-  const vtags = new Set((v.tags||[]).map(t => t.toLowerCase()));
-  const vwords = new Set((v.title||'').toLowerCase().split(/\W+/).filter(w => w.length > 3));
+  const vwords = new Set((v.title + ' ' + (v.description||'')).toLowerCase().split(/\W+/).filter(relKw));
   const scored = pool.filter(x => x.id !== v.id && !isBlocked(x)).map(x => {
     let s = 0;
-    if (x.channelId && x.channelId === v.channelId) s += 5;
-    (x.tags||[]).forEach(t => { if (vtags.has(t.toLowerCase())) s += 2; });
-    (x.title||'').toLowerCase().split(/\W+/).forEach(w => { if (w.length > 3 && vwords.has(w)) s += 1; });
-    if (!watched.has(x.id)) s += 0.5;
+    if (x.channelId && x.channelId === v.channelId) s += 4; // same channel
+    const seen = new Set();
+    (x.title + ' ' + (x.description||'')).toLowerCase().split(/\W+/).forEach(w => {
+      if (relKw(w) && vwords.has(w) && !seen.has(w)) { seen.add(w); s += 1; } // shared title/description word
+    });
+    if (!watched.has(x.id)) s += 0.3;
     return { x, s };
-  }).filter(o => o.s > 0).sort((a,b) => b.s - a.s).slice(0, 8);
+  }).filter(o => o.s >= 1).sort((a,b) => b.s - a.s).slice(0, 8);
   if (!scored.length) return;
   box.innerHTML = '<h4>Related from your feed</h4><div class="related-grid"></div>';
   const grid = box.querySelector('.related-grid');
