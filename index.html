@@ -448,16 +448,25 @@ data.music = data.music || [];
 
 // Pool (browsable feed) + auto-tracked channels now live in the synced data.
 // (migrate any old device-local copies on first run)
-const POOL_MAX = 1000, TRACKED_MAX = 50;
+const POOL_MAX = 5000, TRACKED_MAX = 50, DESC_MAX = 500; // bigger feed; trim descriptions to what search needs
 let pool = (data.pool && data.pool.length) ? data.pool : readJSON('replay.pool', []);
 let tracked = (data.tracked && data.tracked.length) ? data.tracked : readJSON('replay.tracked', []);
 data.pool = pool; data.tracked = tracked; // keep data and locals on the same arrays
+// One-time shrink of already-stored videos to the trimmed shape — frees space for the bigger pool.
+['pool','history','watchLater','favorites','music'].forEach(k => {
+  if (Array.isArray(data[k])) data[k].forEach(v => { if (v && typeof v.description === 'string' && v.description.length > DESC_MAX) v.description = v.description.slice(0, DESC_MAX); if (Array.isArray(v.tags) && v.tags.length > 12) v.tags = v.tags.slice(0, 12); });
+});
 function savePool(){ data.pool = pool; saveData(); renderPoolStat(); }
 function saveTracked(){ data.tracked = tracked; saveData(); }
 
 function saveData({ touch=true, sync=true } = {}) {
   if (touch) data.updatedAt = Date.now();
-  writeJSON(DATA_KEY, data);
+  try {
+    writeJSON(DATA_KEY, data);
+  } catch (e) { // localStorage full → drop the oldest third of the pool and retry once, so we never crash
+    if (pool.length > 200) { pool = pool.slice(0, Math.floor(pool.length * 0.66)); data.pool = pool; try { renderPoolStat(); } catch {} }
+    try { writeJSON(DATA_KEY, data); } catch {}
+  }
   if (sync) scheduleSync();
 }
 function saveSecrets() { writeJSON(SECRETS_KEY, secrets); }
@@ -1187,9 +1196,30 @@ async function expandChannelRow(row, id) {
   } catch (e) { box.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px">'+escapeHtml(apiErr(e))+'</div>'; }
 }
 
+// Render in batches so a big feed stays smooth — 300 cards at a time behind a "Show more" button.
+const RENDER_BATCH = 300;
+let _renderList = [], _renderCount = 0;
 function renderCards(list) {
-  const grid = $('grid'); grid.innerHTML='';
-  list.forEach(v => grid.appendChild(card(v)));
+  _renderList = list || []; _renderCount = 0;
+  $('grid').innerHTML = '';
+  growCards();
+}
+function growCards() {
+  const grid = $('grid');
+  const oldMore = grid.querySelector('.showmore'); if (oldMore) oldMore.remove();
+  const fm = grid.querySelector('#loadMore'); const anchor = fm ? fm.parentElement : null; // keep cards above the "Find more" footer
+  const frag = document.createDocumentFragment();
+  const end = Math.min(_renderCount + RENDER_BATCH, _renderList.length);
+  for (let i = _renderCount; i < end; i++) frag.appendChild(card(_renderList[i]));
+  _renderCount = end;
+  if (anchor) grid.insertBefore(frag, anchor); else grid.appendChild(frag);
+  if (_renderCount < _renderList.length) {
+    const wrap = document.createElement('div'); wrap.className = 'showmore'; wrap.style.cssText = 'grid-column:1/-1;text-align:center;padding:14px';
+    const b = document.createElement('button'); b.textContent = `Show more (${_renderList.length - _renderCount} more)`;
+    b.onclick = growCards;
+    wrap.appendChild(b);
+    if (anchor) grid.insertBefore(wrap, anchor); else grid.appendChild(wrap);
+  }
 }
 
 function card(v) {
@@ -1261,7 +1291,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:v.description||'',tags:v.tags||[],thumb:v.thumb,duration:v.duration,isShort:v.isShort,publishedAt:v.publishedAt,live:v.live||'none'}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:(v.description||'').slice(0,DESC_MAX),tags:(v.tags||[]).slice(0,12),thumb:v.thumb,duration:v.duration,isShort:v.isShort,publishedAt:v.publishedAt,live:v.live||'none'}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
