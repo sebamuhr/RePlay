@@ -171,8 +171,9 @@
   .chbanner .chtitle { font-size:15px; font-weight:600; }
   .chbanner .chactions { display:flex; gap:8px; flex-wrap:wrap; }
   .chbanner button { padding:7px 11px; font-size:13px; }
-  .channel .chlink { color:var(--muted); }
-  .channel .chlink:hover, .pchannel .chlink { color:var(--blue); }
+  .channel .chlink, .pchannel .chlink { color:var(--muted); }
+  .channel .chlink:hover, .pchannel .chlink:hover { color:#9ecbff; }
+  .channel .chlink.followed, .pchannel .chlink.followed { color:var(--blue); font-weight:600; } /* followed channel */
   .player iframe { width:100%; height:100%; border:0; }
   .player .controls { display:flex; justify-content:space-between; align-items:center; margin-top:10px; gap:10px; flex-wrap:wrap; }
   .player .ptitle { font-size:15px; flex:1; min-width:200px; }
@@ -978,7 +979,7 @@ function card(v) {
     </div>
     <div class="meta">
       <p class="title">${escapeHtml(v.title)}</p>
-      <div class="channel">${v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel)}</div>
+      <div class="channel">${v.channelId ? `<a href="#" class="chlink${isFollowed(v.channelId)?' followed':''}">${escapeHtml(v.channel)}</a>` : escapeHtml(v.channel)}</div>
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
@@ -1040,10 +1041,10 @@ function followChannel(v) {
   if (!v.channelId) { toast('Channel info missing — re-open this video from a fresh search.'); return; }
   data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== v.channelId); data.hiddenChannelsUpdatedAt = Date.now();
   if (!isFollowed(v.channelId)) data.followed.push({ id:v.channelId, title:v.channel, lastVideoId:v.id, ts:Date.now() });
-  data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed();
+  data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); refreshCurrent();
   toast(`Following “${v.channel}”.`);
 }
-function unfollowChannel(id) { data.followed = data.followed.filter(c => c.id !== id); data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); }
+function unfollowChannel(id) { data.followed = data.followed.filter(c => c.id !== id); data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); refreshCurrent(); }
 function hideChannel(v) {
   if (!v.channelId) { addDislike(v.channel); return; } // fallback: block by name
   data.followed = data.followed.filter(c => c.id !== v.channelId); data.followedUpdatedAt = Date.now();
@@ -1320,7 +1321,7 @@ function buildShortsQueue(v) {
 function fillMeta(v) {
   $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
-  const chLink = v.channelId ? `<a href="#" class="chlink">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
+  const chLink = v.channelId ? `<a href="#" class="chlink${isFollowed(v.channelId)?' followed':''}">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
   $('pchannel').innerHTML = chLink + (v.publishedAt ? ` · ${escapeHtml(timeAgo(v.publishedAt))}` : '');
   const chl = $('pchannel').querySelector('.chlink'); if (chl) chl.onclick = (e) => { e.preventDefault(); history.back(); openChannel(v.channelId, v.channel); };
   const desc = v.description || '';
@@ -1455,6 +1456,7 @@ function syncPlayerButtons() {
   $('pFav').classList.toggle('on',inFav); $('pFav').textContent = inFav?'★ Favorited':'★ Favorite';
   const fol = playing.channelId && isFollowed(playing.channelId);
   $('pFollow').classList.toggle('on',fol); $('pFollow').textContent = fol ? '👍 Following' : '👍 Follow channel';
+  const cl = $('pchannel').querySelector('.chlink'); if (cl) cl.classList.toggle('followed', !!fol);
 }
 $('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
 $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
