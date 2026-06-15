@@ -111,6 +111,7 @@
   .actions button.orient { padding:6px 8px; line-height:1; }
   .actions button.orient .ph { display:inline-block; transition:transform .15s; }
   .actions button.orient.horiz .ph { transform:rotate(90deg); } /* phone laid on its side = horizontal */
+  .actions button.orient.counting { color:var(--accent); border-color:var(--accent); font-weight:700; min-width:30px; } /* 3·2·1 countdown */
   .actions button.remove { color:#ff9a9a; border-color:#3a1d1d; }
   .actions button.remove:hover { border-color:var(--accent); }
 
@@ -152,7 +153,7 @@
   .modal.shorts { padding:0; align-items:stretch; }
   .modal.shorts .player { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; overflow:hidden; position:relative; }
   .modal.shorts .frame { width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
-  .modal.shorts #shortSwipe { display:block; position:absolute; inset:0; z-index:4; } /* catches swipe/scroll over the video */
+  .modal.shorts #shortSwipe { display:block; position:absolute; top:0; left:0; right:0; bottom:64px; z-index:4; } /* catches swipe/scroll, but leaves the bottom strip free so YouTube's timebar/controls are tappable */
   #svTrack { display:none; }
   .modal.shorts #svTrack { display:block; position:absolute; left:0; top:0; width:100%; z-index:2; }
   .modal.shorts #iframe { display:none; }
@@ -1170,7 +1171,27 @@ function card(v) {
   if (cl) cl.onclick = (e) => { e.stopPropagation(); e.preventDefault(); openChannel(v.channelId, v.channel); };
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
-  el.querySelector('.orient').onclick = (e) => { e.stopPropagation(); setOrient(v, isVert(v) ? 'horiz' : 'vert'); };
+  const orientBtn = el.querySelector('.orient');
+  let orientTimer = null;
+  orientBtn.onclick = (e) => {
+    e.stopPropagation();
+    if (orientTimer) { // tapped again mid-countdown → cancel, video stays put
+      clearInterval(orientTimer); orientTimer = null;
+      orientBtn.classList.remove('counting');
+      orientBtn.innerHTML = '<span class="ph">📱</span>';
+      return;
+    }
+    const target = isVert(v) ? 'horiz' : 'vert'; // flip to the other orientation when it fires
+    let n = 3;
+    orientBtn.classList.add('counting');
+    orientBtn.textContent = n; // 3 … 2 … 1 … bum
+    orientTimer = setInterval(() => {
+      n--;
+      if (n > 0) { orientBtn.textContent = n; return; }
+      clearInterval(orientTimer); orientTimer = null;
+      setOrient(v, target); // commit → re-render moves it to the other sub-tab
+    }, 1000);
+  };
   const hd = el.querySelector('.hide');
   if (hd) hd.onclick = (e) => { e.stopPropagation(); hideVideo(v); };
   const rm = el.querySelector('.remove');
@@ -1541,7 +1562,7 @@ function svIframe(v, autoplay) {
   const origin = location.protocol.startsWith('http') ? `&origin=${encodeURIComponent(location.origin)}` : '';
   const ifr = document.createElement('iframe');
   ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
-  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=0&enablejsapi=1&autoplay=${autoplay?1:0}${origin}`;
+  ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&playsinline=1&controls=1&enablejsapi=1&autoplay=${autoplay?1:0}${origin}`;
   return ifr;
 }
 function svFill(slide, v, withIframe) {
