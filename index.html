@@ -104,18 +104,18 @@
     align-items:center; padding:14px 0; border-bottom:1px solid var(--line); margin-bottom:8px; z-index:1; max-width:900px; margin-left:auto; margin-right:auto; }
   .panelhead b { font-size:16px; }
   .panel > *:not(.panelhead) { max-width:900px; margin-left:auto; margin-right:auto; }
-  .panel h3 { margin:18px 0 8px; font-size:14px; }
+  .panel h3 { margin:30px 0 10px; font-size:14px; }
   .panel h3:first-child { margin-top:0; }
-  .panel p { color:var(--muted); font-size:12px; margin:0 0 10px; }
-  .row { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center; }
+  .panel p { color:var(--muted); font-size:12px; margin:0 0 14px; line-height:1.5; }
+  .row { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
   .row input[type=text],.row input[type=search],.row input[type=password] { flex:1; min-width:180px; }
   .row .lbl { font-size:13px; min-width:120px; }
   .num { width:80px; }
-  .blocklist { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .blocklist { display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; margin-bottom:6px; }
   .blockword { background:#1a0d0d; border:1px solid #3a1d1d; color:#ff9a9a; padding:5px 10px;
     border-radius:999px; font-size:13px; display:inline-flex; gap:6px; align-items:center; }
   .blockword .x { cursor:pointer; }
-  .hr { border:0; border-top:1px solid var(--line); margin:18px 0; }
+  .hr { border:0; border-top:1px solid var(--line); margin:30px 0; }
   .switch { display:inline-flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; user-select:none; }
   .switch input { width:16px; height:16px; }
   .synced { font-size:11px; color:var(--good); }
@@ -191,7 +191,7 @@
   .suggest .like, .suggest .dislike { cursor:pointer; filter:grayscale(.4); }
   .suggest .like:hover, .suggest .dislike:hover { filter:none; }
   .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
-  .sublabel { font-size:12px; color:var(--muted); margin:12px 0 4px; }
+  .sublabel { font-size:12px; color:var(--muted); margin:16px 0 6px; }
   .led { width:14px; height:14px; border-radius:50%; cursor:pointer; flex:0 0 auto; border:1px solid #333; transition:background .2s, box-shadow .2s; }
   .led[data-state="off"] { background:#444; }
   .led[data-state="green"] { background:var(--good); box-shadow:0 0 7px var(--good); }
