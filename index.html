@@ -826,9 +826,9 @@ function showFeed() {
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
     if (activeFilters.length) {
-      const words = activeFilters.join(' ').toLowerCase().split(/\s+/).filter(Boolean); // word-match (all words must appear)
+      const words = activeFilters.join(' ').toLowerCase().split(/\s+/).filter(Boolean); // each word must appear in title OR description
       items = items.filter(v => {
-        const hay = (v.title + ' ' + v.channel + ' ' + (v.tags||[]).join(' ') + ' ' + (v.description||'')).toLowerCase();
+        const hay = (v.title + ' ' + (v.description||'')).toLowerCase(); // title + description only (not tags/channel)
         return words.every(w => hay.includes(w));
       });
     }
