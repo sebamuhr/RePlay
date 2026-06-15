@@ -218,6 +218,8 @@
   .subtabs { max-width:1100px; margin:10px auto 0; display:flex; gap:6px; }
   .subtab { background:var(--card); border:1px solid var(--line); color:var(--muted); padding:6px 14px; border-radius:8px; font-size:13px; cursor:pointer; }
   .subtab.active { color:var(--fg); border-color:#444; background:#181818; }
+  .playall { margin-left:auto; background:var(--card); border:1px solid var(--line); color:var(--fg); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
+  .playall:hover { border-color:#444; }
 </style>
 </head>
 <body>
@@ -252,6 +254,7 @@
     <button class="subtab active" data-sub="videos">🎬 Videos</button>
     <button class="subtab" data-sub="shorts">🩳 Shorts</button>
     <button class="subtab" data-sub="channels">📺 Channels</button>
+    <button id="playAllBtn" class="playall" title="Play all (autoplay through the list)">▶ Play all</button>
   </div>
 
   <div class="chips" id="activeFilters"></div>
@@ -945,6 +948,7 @@ function rerenderFilter() {
   $('homeSubtabs').style.display = 'flex';
   document.querySelector('.subtab[data-sub="shorts"]').style.display = hideShorts ? 'none' : '';
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
+  $('playAllBtn').style.display = (homeSub==='channels') ? 'none' : '';
   if (homeSub === 'channels') { renderChannelsSub(); return; }
 
   const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
@@ -1385,9 +1389,34 @@ function renderTab() {
 /* ============================== PLAYER + BUDGET GATE ============================== */
 let playing = null;
 let shortsQueue = [], shortsIndex = -1;
+let videoQueue = [], videoIndex = -1;   // for "Play all" / autoplay-next on normal videos
 function play(v) {
-  if (v.isShort) buildShortsQueue(v);   // user click on a short → set up the swipe queue
+  if (v.isShort) buildShortsQueue(v);   // short → swipe queue
+  else buildVideoQueue(v);              // normal → autoplay queue
   openPlayer(v, false);
+}
+function buildVideoQueue(v) {
+  let src;
+  if (channelView) src = channelVideos;
+  else if (currentTab === 'search') src = lastResults;
+  else src = ({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []);
+  const vids = visibleList(src, false).filter(x => !x.isShort && !isBlocked(x));
+  videoQueue = vids.length ? vids : [v];
+  videoIndex = Math.max(0, videoQueue.findIndex(x => x.id === v.id));
+}
+function onVideoEnded() {
+  if (!$('modal').classList.contains('open') || $('modal').classList.contains('shorts')) return;
+  const i = videoIndex + 1;
+  if (i < videoQueue.length && !budgetLocked('videos')) { videoIndex = i; openPlayer(videoQueue[i], false, true); }
+}
+function playAll() {
+  let list;
+  if (channelView) list = channelVideos.filter(v => !isBlocked(v));
+  else if (currentTab === 'search') list = visibleList(lastResults, false).filter(v => !isBlocked(v));
+  else list = visibleList(({ history:data.history, later:data.watchLater, favorites:data.favorites }[currentTab] || []), false);
+  list = (list||[]).filter(v => homeSub==='shorts' ? v.isShort : !v.isShort);
+  if (!list.length) { toast('Nothing to play here.'); return; }
+  play(list[0]);
 }
 let shortPaused = false;
 function buildShortsQueue(v) {
@@ -1495,8 +1524,9 @@ function openPlayer(v, restore, replace) {
     const old = $('iframe'); if (old) old.remove();
     const ifr = document.createElement('iframe');
     ifr.id = 'iframe'; ifr.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'; ifr.allowFullscreen = true;
-    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s'; ifr.onload = () => { ifr.style.opacity = '1'; };
-    ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1${origin}`;
+    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .25s';
+    ifr.onload = () => { ifr.style.opacity = '1'; try { ifr.contentWindow.postMessage(JSON.stringify({event:'listening', id:'replay', channel:'widget'}), '*'); } catch {} };
+    ifr.src = `https://www.youtube-nocookie.com/embed/${v.id}?rel=0&autoplay=1&playsinline=1&enablejsapi=1${origin}`;
     frame.insertBefore(ifr, frame.firstChild);
   }
   $('modal').classList.add('open');
@@ -1607,6 +1637,15 @@ function applyNav(s) {
   else if ($('modal').classList.contains('open')) closePlayerUI();
 }
 window.addEventListener('popstate', e => applyNav(e.state));
+
+// Listen for YouTube player state → autoplay the next video when one ends.
+window.addEventListener('message', e => {
+  if (typeof e.data !== 'string' || !/youtube/.test(e.origin)) return;
+  let d; try { d = JSON.parse(e.data); } catch { return; }
+  const state = d.event==='onStateChange' ? d.info : (d.event==='infoDelivery' && d.info && typeof d.info.playerState==='number' ? d.info.playerState : null);
+  if (state === 0) onVideoEnded(); // 0 = ended
+});
+$('playAllBtn').onclick = playAll;
 
 /* ============================== GITHUB SYNC ============================== */
 const GIST_FILE = 'replay-data.json';
