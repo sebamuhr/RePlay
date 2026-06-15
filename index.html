@@ -2032,7 +2032,12 @@ $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFi
   }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('controllerchange', () => { if (!window.__rlReloaded) { window.__rlReloaded = true; location.reload(); } });
-    navigator.serviceWorker.register('sw.js').then(reg => { reg.update(); }).catch(()=>{});
+    // updateViaCache:'none' → the sw.js script is always re-checked against the network, so new
+    // versions are detected immediately instead of sitting behind the HTTP cache.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update();
+      setInterval(() => reg.update(), 60000); // keep checking while the app is open
+    }).catch(()=>{});
   }
   if (secrets.apiKey && data.followed.length) { // light the LED on startup, throttled (you may have many subs)
     const last = +readJSON('replay.ledAt', 0);
