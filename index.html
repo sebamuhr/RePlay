@@ -554,8 +554,20 @@ $('gearBtn').onclick = () => { if ($('panel').classList.contains('open')) histor
 let wakeLock = null;
 async function requestWake() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
 function releaseWake() { try { wakeLock && wakeLock.release(); } catch {} wakeLock = null; }
-function openBlackout() { $('blackout').classList.add('on'); requestWake(); }   // keep the screen awake (black) so it won't auto-lock & pause
-function closeBlackout() { $('blackout').classList.remove('on'); releaseWake(); }
+// Go immersive: hides the notification/status bar + browser chrome on Android so the phone really
+// looks "off" in your pocket. (iOS only allows true fullscreen for <video>, so there it stays a
+// black overlay — the OS won't let any web page block the notification shade or hardware buttons.)
+function enterFullscreen(el) {
+  const fn = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen || el.msRequestFullscreen;
+  if (fn) { try { const r = fn.call(el, { navigationUI: 'hide' }); r && r.catch && r.catch(()=>{}); } catch {} }
+}
+function exitFullscreen() {
+  const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+  const fn = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+  if (fn && fsEl) { try { const r = fn.call(document); r && r.catch && r.catch(()=>{}); } catch {} }
+}
+function openBlackout() { const b = $('blackout'); b.classList.add('on'); requestWake(); enterFullscreen(b); } // awake + immersive + black
+function closeBlackout() { $('blackout').classList.remove('on'); releaseWake(); exitFullscreen(); }
 $('playerMoon').onclick = openBlackout;
 $('blackoutClose').onclick = (e) => { e.stopPropagation(); closeBlackout(); };
 $('blackout').addEventListener('touchmove', e => e.preventDefault(), { passive:false }); // nothing scrolls behind the dark
