@@ -325,9 +325,11 @@
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
 
     <hr class="hr">
-    <h3>Search language &amp; region</h3>
-    <p>So YouTube searches return results in <b>your</b> language and country instead of the highest-volume global stuff. Leave blank to use your browser's locale. Examples — Language: <i>es</i>, <i>en</i>, <i>pt</i>; Region: <i>CL</i>, <i>US</i>, <i>ES</i>, <i>MX</i>.</p>
-    <div class="row"><span class="lbl" style="min-width:auto">Language</span><input class="num" id="searchLang" type="text" placeholder="es" style="width:70px"><span class="lbl" style="min-width:auto">Region</span><input class="num" id="searchRegion" type="text" placeholder="CL" style="width:70px"></div>
+    <h3>Languages</h3>
+    <p>Only search for videos in these languages — your feed stays the same wherever you travel (no location/IP detection). Add as many as you like. Leave empty for no language filter.</p>
+    <div class="blocklist" id="langList"></div>
+    <div class="row" style="margin-top:8px"><input id="newLang" type="text" placeholder="español, english, deutsch… or es, en, de" autocomplete="off" spellcheck="false"><button id="addLang">＋ Add</button></div>
+    <div class="blocklist" id="langPicker"></div>
 
     <hr class="hr">
     <h3>Vertical videos</h3>
@@ -431,8 +433,7 @@ function defaultData() {
     prefs: {
       hideShorts: false,
       verticalMaxSec: 60,
-      searchLang: '',    // YouTube relevanceLanguage, e.g. "es" (blank = auto from browser)
-      searchRegion: '',  // YouTube regionCode, e.g. "CL" (blank = auto from browser)
+      langs: [],         // languages to search in, e.g. ["es","en"] — empty = no language filter
       topics: [],
       autoFill: { enabled: false, perDay: 5 },
       budgets: {
@@ -631,12 +632,50 @@ $('saveKey').onclick = () => { secrets.apiKey = $('apiKey').value.trim(); saveSe
 $('hideShorts').onchange = () => { data.prefs.hideShorts = $('hideShorts').checked; touchPrefs(); rerenderFilter(); };
 $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
 $('verticalMaxSec').onchange = () => { data.prefs.verticalMaxSec = Math.max(1, +$('verticalMaxSec').value||60); touchPrefs(); refreshCurrent(); };
-$('searchLang').value = data.prefs.searchLang || '';
-$('searchRegion').value = data.prefs.searchRegion || '';
-$('searchLang').onchange = () => { data.prefs.searchLang = $('searchLang').value.trim().toLowerCase().slice(0,5); touchPrefs(); _enriched.clear(); toast('Search language set — new searches use it.'); };
-$('searchRegion').onchange = () => { data.prefs.searchRegion = $('searchRegion').value.trim().toUpperCase().slice(0,2); touchPrefs(); _enriched.clear(); toast('Search region set — new searches use it.'); };
-
 function touchPrefs(){ data.prefs.updatedAt = Date.now(); saveData(); }
+
+// ---- Languages preference (multi-select; no location detection) ----
+const LANG_NAMES = { es:'Español', en:'English', de:'Deutsch', fr:'Français', pt:'Português', it:'Italiano', nl:'Nederlands', ru:'Русский', ja:'日本語', ko:'한국어', zh:'中文', ar:'العربية', hi:'हिन्दी', tr:'Türkçe', pl:'Polski', sv:'Svenska' };
+const NAME_LANG = Object.fromEntries(Object.entries(LANG_NAMES).map(([c,n]) => [normText(n), c])); // "español" -> "es"
+function langCode(input) {
+  let s = String(input||'').trim().toLowerCase();
+  if (!s) return '';
+  if (LANG_NAMES[s]) return s;                 // already a code
+  if (NAME_LANG[normText(s)]) return NAME_LANG[normText(s)]; // a name like "español"
+  return s.slice(0,2);                         // best effort: first 2 letters
+}
+function renderLangs() {
+  const wrap = $('langList'); if (!wrap) return;
+  const ls = data.prefs.langs || [];
+  wrap.innerHTML = ls.length ? '' : '<span style="color:var(--muted);font-size:13px">No language filter — searches return everything.</span>';
+  ls.forEach(code => {
+    const el = document.createElement('span'); el.className = 'blockword';
+    el.innerHTML = `${escapeHtml(LANG_NAMES[code] || code)} <span class="x">✕</span>`;
+    el.querySelector('.x').onclick = () => removeLang(code);
+    wrap.appendChild(el);
+  });
+  const picker = $('langPicker'); if (picker) {
+    picker.innerHTML = '';
+    Object.keys(LANG_NAMES).filter(c => !ls.includes(c)).forEach(c => {
+      const el = document.createElement('span'); el.className = 'topic'; el.style.cursor = 'pointer';
+      el.textContent = '＋ ' + LANG_NAMES[c]; el.onclick = () => addLang(c);
+      picker.appendChild(el);
+    });
+  }
+}
+function addLang(input) {
+  const code = langCode(input); if (!code) return;
+  data.prefs.langs = data.prefs.langs || [];
+  if (!data.prefs.langs.includes(code)) data.prefs.langs.push(code);
+  touchPrefs(); renderLangs();
+}
+function removeLang(code) {
+  data.prefs.langs = (data.prefs.langs || []).filter(c => c !== code);
+  touchPrefs(); renderLangs();
+}
+$('addLang').onclick = () => { addLang($('newLang').value); $('newLang').value=''; };
+$('newLang').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addLang($('newLang').value); $('newLang').value=''; } });
+renderLangs();
 
 function renderBudgetPrefs() {
   const wrap = $('budgetPrefs'); wrap.innerHTML = '';
@@ -898,41 +937,33 @@ $('q').addEventListener('keydown', e => {
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
-// Language + region for YouTube search, so "news today" returns YOUR-language news, not the
-// highest-volume global stuff. Uses your setting, else falls back to the browser locale.
-// Country from the device timezone — this is what makes search behave like logged-out YouTube,
-// which uses your LOCATION (not your browser language) to localise results.
-const TZ_COUNTRY = {
-  'America/Santiago':'CL','America/Punta_Arenas':'CL','Pacific/Easter':'CL',
-  'America/Argentina/Buenos_Aires':'AR','America/Argentina/Cordoba':'AR','America/Argentina/Mendoza':'AR',
-  'America/Mexico_City':'MX','America/Monterrey':'MX','America/Tijuana':'MX','America/Cancun':'MX',
-  'America/Lima':'PE','America/Bogota':'CO','America/Caracas':'VE','America/Montevideo':'UY',
-  'America/La_Paz':'BO','America/Asuncion':'PY','America/Guayaquil':'EC','America/Santo_Domingo':'DO',
-  'America/Costa_Rica':'CR','America/Panama':'PA','America/Guatemala':'GT','America/El_Salvador':'SV',
-  'America/Tegucigalpa':'HN','America/Managua':'NI','America/Havana':'CU','America/Puerto_Rico':'PR',
-  'Europe/Madrid':'ES','Atlantic/Canary':'ES','America/Sao_Paulo':'BR','America/Bahia':'BR',
-  'America/New_York':'US','America/Chicago':'US','America/Denver':'US','America/Los_Angeles':'US',
-  'Europe/London':'GB','Europe/Lisbon':'PT',
-};
-const COUNTRY_LANG = { CL:'es',AR:'es',MX:'es',PE:'es',CO:'es',VE:'es',UY:'es',BO:'es',PY:'es',EC:'es',DO:'es',CR:'es',PA:'es',GT:'es',SV:'es',HN:'es',NI:'es',CU:'es',PR:'es',ES:'es',BR:'pt',PT:'pt' };
-function autoLocale() {
-  let tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
-  const nav = (navigator.language || 'en-US').split('-');
-  const region = TZ_COUNTRY[tz] || (nav[1] || '').toUpperCase() || '';
-  const lang = COUNTRY_LANG[region] || nav[0] || 'en';
-  return { lang, region };
+// Languages the user wants (no IP/location at all). Empty = no language bias.
+function searchLangs() {
+  const ls = (data.prefs.langs || []).map(s => String(s).trim().toLowerCase()).filter(Boolean);
+  return ls.length ? ls : ['']; // [''] = a single search with no relevanceLanguage
 }
-function searchLocaleParams() {
-  const a = autoLocale();
-  const lang = (data.prefs.searchLang || a.lang || '').trim();
-  const region = (data.prefs.searchRegion || a.region || '').trim().toUpperCase();
-  return (lang ? `&relevanceLanguage=${encodeURIComponent(lang)}` : '') + (region ? `&regionCode=${encodeURIComponent(region)}` : '');
-}
-async function searchPage(query, pageToken, order) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}${searchLocaleParams()}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
+// One YouTube search page for a given language. tokens are per-language (see searchPageMulti).
+async function searchPage(query, pageToken, order, lang) {
+  const langParam = lang ? `&relevanceLanguage=${encodeURIComponent(lang)}` : '';
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}${langParam}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
   const d = await (await fetch(url)).json();
   if (d.error) throw new Error(d.error.message || 'API error');
   return { ids: (d.items||[]).map(i => i.id.videoId).filter(Boolean), next: d.nextPageToken || null };
+}
+// Search every selected language and round-robin-merge the results (so EN and ES are mixed, not blocked).
+// `prevTokens` is a {lang: token} map for pagination; returns { ids, tokens }.
+async function searchPageMulti(query, prevTokens, order) {
+  const langs = searchLangs();
+  const results = await Promise.all(langs.map(lang => searchPage(query, (prevTokens && prevTokens[lang]) || null, order, lang).catch(() => ({ ids: [], next: null }))));
+  const tokens = {}; langs.forEach((lang, i) => { tokens[lang] = results[i].next; });
+  // round-robin interleave
+  const lists = results.map(r => r.ids); const merged = []; const seen = new Set();
+  for (let i = 0; ; i++) {
+    let any = false;
+    for (const list of lists) { const id = list[i]; if (id) { any = true; if (!seen.has(id)) { seen.add(id); merged.push(id); } } }
+    if (!any) break;
+  }
+  return { ids: merged, tokens };
 }
 async function fetchVideos(ids) {
   const out = [];
@@ -1098,8 +1129,7 @@ async function findMore(order) {
       const query = activeFilters.join(' ');
       // paginate the same search only when not a fresh/date run
       const paginate = (!order && pageState && pageState.mode==='search' && pageState.query===query && searchQuery===query);
-      const token = paginate ? pageState.token : null;
-      const { ids, next } = await searchPage(query, token, order);
+      const { ids, tokens } = await searchPageMulti(query, paginate ? pageState.tokens : null, order);
       const vids = await fetchVideos(ids);
       addToPool(vids); // cache for offline/related — display still uses YouTube's order below
       const byId = new Map(vids.map(v => [v.id, v]));
@@ -1112,7 +1142,7 @@ async function findMore(order) {
         searchResults = ordered; added = ordered.length; // new search (or date refresh) → replace
       }
       searchQuery = query;
-      if (!order) pageState = { mode:'search', query, token: next };
+      if (!order) pageState = { mode:'search', query, tokens };
       rememberSearch(query);
     } else {
       const topics = data.prefs.topics || [];
@@ -1226,7 +1256,7 @@ async function renderChannelsSub() {
       if (q !== channelQuery) {
         flash('Searching channels…');
         try {
-          const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${searchLocaleParams()}&key=${secrets.apiKey}`)).json();
+          const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${(searchLangs()[0] && searchLangs()[0]!=='') ? '&relevanceLanguage='+searchLangs()[0] : ''}&key=${secrets.apiKey}`)).json();
           if (res.error) throw new Error(res.error.message);
           channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:decodeEntities(it.snippet.title), description:decodeEntities(it.snippet.description||''), thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
           channelQuery = q; channelPageToken = res.nextPageToken || '';
@@ -1262,7 +1292,7 @@ async function fetchMoreChannels() {
   const q = activeFilters.join(' ').trim();
   const btn = $('fetchMoreCh'); if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
   try {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${searchLocaleParams()}&key=${secrets.apiKey}`
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${(searchLangs()[0] && searchLangs()[0]!=='') ? '&relevanceLanguage='+searchLangs()[0] : ''}&key=${secrets.apiKey}`
       + (channelPageToken ? `&pageToken=${channelPageToken}` : '');
     const res = await (await fetch(url)).json();
     if (res.error) throw new Error(res.error.message);
@@ -2106,8 +2136,7 @@ function softRefresh() {
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
-  $('searchLang').value = data.prefs.searchLang || '';
-  $('searchRegion').value = data.prefs.searchRegion || '';
+  renderLangs();
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
@@ -2156,7 +2185,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v56'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v57'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
