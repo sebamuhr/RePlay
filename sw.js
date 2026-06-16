@@ -1,7 +1,7 @@
 /* RePlay service worker.
    Network-first for the app shell so updates show immediately when online,
    with cache fallback so it still works offline. */
-const CACHE = 'replay-v54';
+const CACHE = 'replay-v55';
 const ASSETS = [
   './',
   './index.html',
@@ -12,7 +12,14 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // RESILIENT pre-cache: allSettled (not addAll) so one slow/failed file can't block the new
+  // worker from installing — that was making updates get stuck on the old version forever.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => Promise.allSettled(ASSETS.map(a => c.add(a))))
+      .then(() => self.skipWaiting())
+      .catch(() => self.skipWaiting()) // even if caching fails entirely, take over so we're not stuck
+  );
 });
 
 self.addEventListener('activate', e => {
