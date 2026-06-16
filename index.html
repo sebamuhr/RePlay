@@ -326,6 +326,11 @@
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
 
     <hr class="hr">
+    <h3>Search language &amp; region</h3>
+    <p>So YouTube searches return results in <b>your</b> language and country instead of the highest-volume global stuff. Leave blank to use your browser's locale. Examples — Language: <i>es</i>, <i>en</i>, <i>pt</i>; Region: <i>CL</i>, <i>US</i>, <i>ES</i>, <i>MX</i>.</p>
+    <div class="row"><span class="lbl" style="min-width:auto">Language</span><input class="num" id="searchLang" type="text" placeholder="es" style="width:70px"><span class="lbl" style="min-width:auto">Region</span><input class="num" id="searchRegion" type="text" placeholder="CL" style="width:70px"></div>
+
+    <hr class="hr">
     <h3>Vertical videos</h3>
     <p>YouTube's API doesn't expose orientation, so we treat short videos as vertical (they get the portrait full-screen player). Raise this if you want longer vertical clips on the Vertical side.</p>
     <div class="row"><span class="lbl" style="min-width:auto">Treat videos up to</span><input class="num" id="verticalMaxSec" type="number" min="1" value="60"><span class="lbl" style="min-width:auto">seconds as vertical</span></div>
@@ -427,6 +432,8 @@ function defaultData() {
     prefs: {
       hideShorts: false,
       verticalMaxSec: 60,
+      searchLang: '',    // YouTube relevanceLanguage, e.g. "es" (blank = auto from browser)
+      searchRegion: '',  // YouTube regionCode, e.g. "CL" (blank = auto from browser)
       topics: [],
       autoFill: { enabled: false, perDay: 5 },
       budgets: {
@@ -636,6 +643,10 @@ $('saveKey').onclick = () => { secrets.apiKey = $('apiKey').value.trim(); saveSe
 $('hideShorts').onchange = () => { data.prefs.hideShorts = $('hideShorts').checked; touchPrefs(); rerenderFilter(); };
 $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
 $('verticalMaxSec').onchange = () => { data.prefs.verticalMaxSec = Math.max(1, +$('verticalMaxSec').value||60); touchPrefs(); refreshCurrent(); };
+$('searchLang').value = data.prefs.searchLang || '';
+$('searchRegion').value = data.prefs.searchRegion || '';
+$('searchLang').onchange = () => { data.prefs.searchLang = $('searchLang').value.trim().toLowerCase().slice(0,5); touchPrefs(); _enriched.clear(); toast('Search language set — new searches use it.'); };
+$('searchRegion').onchange = () => { data.prefs.searchRegion = $('searchRegion').value.trim().toUpperCase().slice(0,2); touchPrefs(); _enriched.clear(); toast('Search region set — new searches use it.'); };
 
 function touchPrefs(){ data.prefs.updatedAt = Date.now(); saveData(); }
 
@@ -899,8 +910,16 @@ $('q').addEventListener('keydown', e => {
 
 /* ============================== API FETCH HELPERS ============================== */
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+// Language + region for YouTube search, so "news today" returns YOUR-language news, not the
+// highest-volume global stuff. Uses your setting, else falls back to the browser locale.
+function searchLocaleParams() {
+  const loc = (navigator.language || 'en-US').split('-');
+  const lang = (data.prefs.searchLang || loc[0] || '').trim();
+  const region = (data.prefs.searchRegion || loc[1] || '').trim().toUpperCase();
+  return (lang ? `&relevanceLanguage=${encodeURIComponent(lang)}` : '') + (region ? `&regionCode=${encodeURIComponent(region)}` : '');
+}
 async function searchPage(query, pageToken, order) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=50&q=${encodeURIComponent(query)}${searchLocaleParams()}${order?`&order=${order}`:''}${pageToken?`&pageToken=${pageToken}`:''}&key=${secrets.apiKey}`;
   const d = await (await fetch(url)).json();
   if (d.error) throw new Error(d.error.message || 'API error');
   return { ids: (d.items||[]).map(i => i.id.videoId).filter(Boolean), next: d.nextPageToken || null };
@@ -978,16 +997,18 @@ function showFeed() {
     items = pool.filter(v => !watched.has(v.id));
     if (activeFilters.length) {
       const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean);
-      // Loose, ranked match: a video is a hit if it contains ANY of the words (title + description +
-      // channel). Results are ordered by how many words matched, then recency — far more forgiving
-      // than requiring every word, and it surfaces the close-but-not-exact matches YouTube would find.
-      items = items
+      // Match the WHOLE query: score = how many words a video contains (title + description + channel).
+      // Show only videos that match ALL the words — a normal search. Only if that's empty do we loosen
+      // to partial matches (so a near-miss like "los hermanos brother" still finds something).
+      const scored = items
         .map(v => {
           const hay = normText(v.title + ' ' + (v.description||'') + ' ' + (v.channel||''));
           let score = 0; for (const w of words) if (hay.includes(w)) score++;
           return { v, score };
         })
-        .filter(o => o.score > 0)
+        .filter(o => o.score > 0);
+      const full = scored.filter(o => o.score === words.length);
+      items = (full.length ? full : scored)
         .sort((a,b) => (b.score - a.score) || ((Date.parse(b.v.publishedAt)||0) - (Date.parse(a.v.publishedAt)||0)))
         .map(o => o.v);
     } else {
@@ -1183,7 +1204,7 @@ async function renderChannelsSub() {
       if (q !== channelQuery) {
         flash('Searching channels…');
         try {
-          const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`)).json();
+          const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${searchLocaleParams()}&key=${secrets.apiKey}`)).json();
           if (res.error) throw new Error(res.error.message);
           channelResults = (res.items||[]).map(it => ({ id:it.id.channelId, title:decodeEntities(it.snippet.title), description:decodeEntities(it.snippet.description||''), thumb:(it.snippet.thumbnails.medium||it.snippet.thumbnails.default||{}).url||'' }));
           channelQuery = q; channelPageToken = res.nextPageToken || '';
@@ -1219,7 +1240,7 @@ async function fetchMoreChannels() {
   const q = activeFilters.join(' ').trim();
   const btn = $('fetchMoreCh'); if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
   try {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}&key=${secrets.apiKey}`
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=20&q=${encodeURIComponent(q)}${searchLocaleParams()}&key=${secrets.apiKey}`
       + (channelPageToken ? `&pageToken=${channelPageToken}` : '');
     const res = await (await fetch(url)).json();
     if (res.error) throw new Error(res.error.message);
@@ -2063,6 +2084,8 @@ function softRefresh() {
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
+  $('searchLang').value = data.prefs.searchLang || '';
+  $('searchRegion').value = data.prefs.searchRegion || '';
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
