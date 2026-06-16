@@ -744,7 +744,7 @@ function renderRecentSearches() {
   data.savedSearches.forEach(s => {
     const el = document.createElement('span'); el.className = 'chip';
     el.innerHTML = `<span class="t">🔎 ${escapeHtml(s)}</span> <span class="x">✕</span>`;
-    el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); currentTab='search'; setTab('search'); pushNav(); };
+    el.querySelector('.t').onclick = () => { activeFilters = s.split(/\s+/).filter(Boolean); currentTab='search'; setTab('search'); pushNav(); runSearch(); };
     el.querySelector('.x').onclick = e => { e.stopPropagation(); data.savedSearches=data.savedSearches.filter(x=>x!==s); data.savedSearchesUpdatedAt = Date.now(); saveData(); renderRecentSearches(); };
     wrap.appendChild(el);
   });
@@ -846,9 +846,9 @@ function addFilter(t) {
   t = (t||'').trim(); if (!t) return;
   currentTab = 'search'; exitChannel(); // filtering leaves any channel view
   if (!activeFilters.some(x => x.toLowerCase()===t.toLowerCase())) activeFilters.push(t);
-  setTab('search'); // shows local matches instantly
+  setTab('search');
   pushNav();
-  enrichFeed(); // fatten the feed: pull matching channels' uploads + fresh YouTube results
+  runSearch(); // a normal YouTube search for this query, shown in YouTube's order
 }
 // Followed/auto-tracked channels whose NAME matches the query — so "teletrece" finds your channel.
 function matchChannelsByName(q) {
@@ -884,7 +884,7 @@ async function enrichFeed() {
 function removeFilter(t) {
   activeFilters = activeFilters.filter(x => x !== t);
   renderActiveFilters();
-  if (activeFilters.length) runFilterSearch(); else loadHome();
+  if (activeFilters.length) runSearch(); else loadHome();
   pushNav();
 }
 $('searchBtn').onclick = () => { addFilter($('q').value); $('q').value=''; hideSugg(); };
@@ -986,34 +986,25 @@ function allTrackedChannels() {
 
 // The free, local feed: pool minus already-watched, filtered by your search terms.
 let channelView = null, channelVideos = [], channelCache = { id:null, items:[] };
+let searchResults = [], searchQuery = ''; // live YouTube search results, shown in YouTube's own order
 
 function showFeed() {
   if (currentTab !== 'search') return;
   let items;
   if (channelView) {
     items = channelVideos.filter(v => !isBlocked(v)); // viewing a single channel (already newest-first)
+  } else if (activeFilters.length && searchQuery === activeFilters.join(' ') && searchResults.length) {
+    // A real YouTube search: show its results in YouTube's own relevance order. No title re-filtering.
+    items = searchResults.filter(v => !isBlocked(v));
   } else {
+    // Home feed (no query) or offline fallback: the local pool, newest first.
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
-    if (activeFilters.length) {
+    if (activeFilters.length) { // offline / no-key fallback only: loose word match so something shows
       const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean);
-      // Match the WHOLE query: score = how many words a video contains (title + description + channel).
-      // Show only videos that match ALL the words — a normal search. Only if that's empty do we loosen
-      // to partial matches (so a near-miss like "los hermanos brother" still finds something).
-      const scored = items
-        .map(v => {
-          const hay = normText(v.title + ' ' + (v.description||'') + ' ' + (v.channel||''));
-          let score = 0; for (const w of words) if (hay.includes(w)) score++;
-          return { v, score };
-        })
-        .filter(o => o.score > 0);
-      const full = scored.filter(o => o.score === words.length);
-      items = (full.length ? full : scored)
-        .sort((a,b) => (b.score - a.score) || ((Date.parse(b.v.publishedAt)||0) - (Date.parse(a.v.publishedAt)||0)))
-        .map(o => o.v);
-    } else {
-      items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
+      items = items.filter(v => { const hay = normText(v.title+' '+(v.description||'')+' '+(v.channel||'')); return words.some(w => hay.includes(w)); });
     }
+    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
     refreshStaleLive();
   }
   lastResults = items;
@@ -1035,8 +1026,16 @@ async function refreshStaleLive() {
   } catch {}
 }
 // kept names for existing callers — both now just show the local feed (no API)
-function loadHome() { showFeed(); }
+function loadHome() { searchResults = []; searchQuery = ''; showFeed(); }
 function runFilterSearch() { showFeed(); }
+// A NORMAL search: ask YouTube for this query and show its results, in its order.
+async function runSearch() {
+  searchResults = []; searchQuery = ''; pageState = null;
+  showFeed(); // clear the old view while we fetch
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key to search ⚙'); return; }
+  flash('Searching YouTube…');
+  await findMore(); // fetches page 1 into searchResults (YouTube order) and re-renders
+}
 
 function exitChannel() { channelView = null; channelVideos = []; }
 async function openChannel(id, title, restore) {
@@ -1086,10 +1085,22 @@ async function findMore(order) {
     let added = 0;
     if (activeFilters.length) {
       const query = activeFilters.join(' ');
-      // order=date always starts fresh (page 1, newest); otherwise continue paginating
-      const token = (!order && pageState && pageState.mode==='search' && pageState.query===query) ? pageState.token : null;
+      // paginate the same search only when not a fresh/date run
+      const paginate = (!order && pageState && pageState.mode==='search' && pageState.query===query && searchQuery===query);
+      const token = paginate ? pageState.token : null;
       const { ids, next } = await searchPage(query, token, order);
-      added = addToPool(await fetchVideos(ids));
+      const vids = await fetchVideos(ids);
+      addToPool(vids); // cache for offline/related — display still uses YouTube's order below
+      const byId = new Map(vids.map(v => [v.id, v]));
+      const ordered = ids.map(id => byId.get(id)).filter(Boolean); // KEEP YouTube's relevance order
+      if (paginate) {
+        const have = new Set(searchResults.map(v => v.id));
+        const more = ordered.filter(v => !have.has(v.id));
+        searchResults = searchResults.concat(more); added = more.length;
+      } else {
+        searchResults = ordered; added = ordered.length; // new search (or date refresh) → replace
+      }
+      searchQuery = query;
       if (!order) pageState = { mode:'search', query, token: next };
       rememberSearch(query);
     } else {
