@@ -254,7 +254,6 @@
       <div id="sugBox" class="sugbox"></div>
     </div>
     <button class="primary" id="searchBtn">Add</button>
-    <button class="icon-btn" id="installBtn" title="Install RePlay as an app">⬇ Install</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
     <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
@@ -580,17 +579,6 @@ setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }
 /* ============================== SETTINGS UI ============================== */
 $('gearBtn').onclick = () => { if ($('panel').classList.contains('open')) history.back(); else { $('panel').classList.add('open'); pushNav(); } };
 
-// Reliable in-app install button (Brave/Chrome don't always surface the address-bar install icon).
-let deferredPrompt = null;
-const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-if (isStandalone()) $('installBtn').style.display = 'none'; // already running as the installed app
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; $('installBtn').style.display = ''; });
-$('installBtn').onclick = async () => {
-  if (deferredPrompt) { deferredPrompt.prompt(); try { await deferredPrompt.userChoice; } catch {} deferredPrompt = null; $('installBtn').style.display = 'none'; return; }
-  // No prompt available → Brave usually thinks an old copy is still installed. Walk them through it.
-  toast('Brave thinks RePlay is still installed. Open  brave://apps , remove RePlay, then reload — or use ☰ menu → "Install RePlay…".', 6000);
-};
-window.addEventListener('appinstalled', () => { deferredPrompt = null; $('installBtn').style.display = 'none'; toast('RePlay installed ✓'); });
 
 // ---- Blackout: full-screen dark window. Playback keeps running underneath; ✕ closes it. ----
 let wakeLock = null;
@@ -912,10 +900,32 @@ $('q').addEventListener('keydown', e => {
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 // Language + region for YouTube search, so "news today" returns YOUR-language news, not the
 // highest-volume global stuff. Uses your setting, else falls back to the browser locale.
+// Country from the device timezone — this is what makes search behave like logged-out YouTube,
+// which uses your LOCATION (not your browser language) to localise results.
+const TZ_COUNTRY = {
+  'America/Santiago':'CL','America/Punta_Arenas':'CL','Pacific/Easter':'CL',
+  'America/Argentina/Buenos_Aires':'AR','America/Argentina/Cordoba':'AR','America/Argentina/Mendoza':'AR',
+  'America/Mexico_City':'MX','America/Monterrey':'MX','America/Tijuana':'MX','America/Cancun':'MX',
+  'America/Lima':'PE','America/Bogota':'CO','America/Caracas':'VE','America/Montevideo':'UY',
+  'America/La_Paz':'BO','America/Asuncion':'PY','America/Guayaquil':'EC','America/Santo_Domingo':'DO',
+  'America/Costa_Rica':'CR','America/Panama':'PA','America/Guatemala':'GT','America/El_Salvador':'SV',
+  'America/Tegucigalpa':'HN','America/Managua':'NI','America/Havana':'CU','America/Puerto_Rico':'PR',
+  'Europe/Madrid':'ES','Atlantic/Canary':'ES','America/Sao_Paulo':'BR','America/Bahia':'BR',
+  'America/New_York':'US','America/Chicago':'US','America/Denver':'US','America/Los_Angeles':'US',
+  'Europe/London':'GB','Europe/Lisbon':'PT',
+};
+const COUNTRY_LANG = { CL:'es',AR:'es',MX:'es',PE:'es',CO:'es',VE:'es',UY:'es',BO:'es',PY:'es',EC:'es',DO:'es',CR:'es',PA:'es',GT:'es',SV:'es',HN:'es',NI:'es',CU:'es',PR:'es',ES:'es',BR:'pt',PT:'pt' };
+function autoLocale() {
+  let tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch {}
+  const nav = (navigator.language || 'en-US').split('-');
+  const region = TZ_COUNTRY[tz] || (nav[1] || '').toUpperCase() || '';
+  const lang = COUNTRY_LANG[region] || nav[0] || 'en';
+  return { lang, region };
+}
 function searchLocaleParams() {
-  const loc = (navigator.language || 'en-US').split('-');
-  const lang = (data.prefs.searchLang || loc[0] || '').trim();
-  const region = (data.prefs.searchRegion || loc[1] || '').trim().toUpperCase();
+  const a = autoLocale();
+  const lang = (data.prefs.searchLang || a.lang || '').trim();
+  const region = (data.prefs.searchRegion || a.region || '').trim().toUpperCase();
   return (lang ? `&relevanceLanguage=${encodeURIComponent(lang)}` : '') + (region ? `&regionCode=${encodeURIComponent(region)}` : '');
 }
 async function searchPage(query, pageToken, order) {
@@ -2146,7 +2156,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v55'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v56'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
