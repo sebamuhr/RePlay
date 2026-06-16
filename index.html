@@ -2140,9 +2140,27 @@ $('led').onclick = fetchChannelNew;
 $('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
 $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
 
+// Share Target: when a YouTube link is shared TO RePlay (e.g. from WhatsApp/YouTube on Android),
+// the app opens at ./?text=…&url=… — pull the video id out and play it.
+function extractYouTubeId(s) {
+  const m = String(s||'').match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/embed\/|\/live\/|\/v\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : '';
+}
+async function handleSharedLink() {
+  const p = new URLSearchParams(location.search);
+  const id = extractYouTubeId(p.get('url') || p.get('text') || p.get('title') || '');
+  if (location.search) history.replaceState(navSnapshot(), '', location.pathname + location.hash); // drop params so a refresh won't replay
+  if (!id) return;
+  let v = pool.find(x => x.id === id) || (data.history||[]).find(x => x.id === id);
+  if (!v && secrets.apiKey) { try { const arr = await fetchVideos([id]); if (arr && arr[0]) { v = arr[0]; addToPool([v]); } } catch {} }
+  if (!v) v = { id, title:'Shared video', channel:'', channelId:'', description:'', tags:[], thumb:`https://i.ytimg.com/vi/${id}/hqdefault.jpg`, duration:0, isShort:false, publishedAt:'', live:'none' };
+  play(v);
+}
+
 (async function init(){
   refreshAll();
   history.replaceState(navSnapshot(), ''); // base history entry so Back always has somewhere to land
+  handleSharedLink(); // if launched via "Share to RePlay", play that video
   if (location.protocol === 'file:') toast('Heads up: open RePlay from a URL (GitHub Pages or localhost), not a file:// path — file:// blocks YouTube playback (error 153).');
   if (!secrets.apiKey) $('panel').classList.add('open');
   if (secrets.ghToken && secrets.gistId) {
