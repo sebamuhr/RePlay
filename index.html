@@ -332,6 +332,11 @@
     <div class="blocklist" id="langPicker"></div>
 
     <hr class="hr">
+    <h3>Pool (home feed)</h3>
+    <p>Your home feed (no search active) is a local cache of videos. Searching no longer adds to it, but if it got filled with junk, empty it here.</p>
+    <div class="row"><span id="poolCount" class="lbl" style="min-width:auto">—</span><button id="clearPool">🗑 Clear pool</button></div>
+
+    <hr class="hr">
     <h3>Vertical videos</h3>
     <p>YouTube's API doesn't expose orientation, so we treat short videos as vertical (they get the portrait full-screen player). Raise this if you want longer vertical clips on the Vertical side.</p>
     <div class="row"><span class="lbl" style="min-width:auto">Treat videos up to</span><input class="num" id="verticalMaxSec" type="number" min="1" value="60"><span class="lbl" style="min-width:auto">seconds as vertical</span></div>
@@ -677,6 +682,17 @@ $('addLang').onclick = () => { addLang($('newLang').value); $('newLang').value='
 $('newLang').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addLang($('newLang').value); $('newLang').value=''; } });
 renderLangs();
 
+function renderPoolCount(){ const el = $('poolCount'); if (el) el.textContent = `${pool.length} videos in pool`; }
+$('clearPool').onclick = () => {
+  if (!pool.length) { toast('Pool is already empty.'); return; }
+  if (!confirm(`Empty your home-feed pool (${pool.length} videos)? Your History, Favorites, Watch Later, Music and followed channels are NOT touched.`)) return;
+  pool = []; data.pool = pool; tracked = []; data.tracked = tracked; pageState = null;
+  savePool(); saveTracked(); renderPoolCount(); renderPoolStat();
+  if (currentTab === 'search' && !activeFilters.length) showFeed();
+  toast('Pool cleared.');
+};
+renderPoolCount();
+
 function renderBudgetPrefs() {
   const wrap = $('budgetPrefs'); wrap.innerHTML = '';
   [['videos','Regular videos'],['shorts','Shorts']].forEach(([bucket,name]) => {
@@ -940,7 +956,9 @@ function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.rand
 // Languages the user wants (no IP/location at all). Empty = no language bias.
 function searchLangs() {
   const ls = (data.prefs.langs || []).map(s => String(s).trim().toLowerCase()).filter(Boolean);
-  return ls.length ? ls : ['']; // [''] = a single search with no relevanceLanguage
+  if (ls.length) return ls;
+  const nav = (navigator.language || '').split('-')[0].toLowerCase(); // not set → at least bias to browser language
+  return nav ? [nav] : [''];
 }
 // One YouTube search page for a given language. tokens are per-language (see searchPageMulti).
 async function searchPage(query, pageToken, order, lang) {
@@ -1138,7 +1156,8 @@ async function findMore(order) {
       const paginate = (!order && pageState && pageState.mode==='search' && pageState.query===query && searchQuery===query);
       const { ids, tokens } = await searchPageMulti(query, paginate ? pageState.tokens : null, order);
       const vids = await fetchVideos(ids);
-      addToPool(vids); // cache for offline/related — display still uses YouTube's order below
+      // NOTE: search results are NOT added to the pool — they live only in this search view, so
+      // searching never pollutes your home feed with random foreign videos.
       const byId = new Map(vids.map(v => [v.id, v]));
       const ordered = ids.map(id => byId.get(id)).filter(Boolean); // KEEP YouTube's relevance order
       if (paginate) {
@@ -2143,7 +2162,7 @@ function softRefresh() {
   renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
-  renderLangs();
+  renderLangs(); renderPoolCount();
   renderActiveFilters(); renderRecentSearches();
   if (currentTab === 'search') rerenderFilter(); else renderTab();
 }
@@ -2192,7 +2211,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v58'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v59'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
