@@ -954,10 +954,15 @@ async function searchPage(query, pageToken, order, lang) {
 // `prevTokens` is a {lang: token} map for pagination; returns { ids, tokens }.
 async function searchPageMulti(query, prevTokens, order) {
   const langs = searchLangs();
-  const results = await Promise.all(langs.map(lang => searchPage(query, (prevTokens && prevTokens[lang]) || null, order, lang).catch(() => ({ ids: [], next: null }))));
-  const tokens = {}; langs.forEach((lang, i) => { tokens[lang] = results[i].next; });
-  // round-robin interleave
-  const lists = results.map(r => r.ids); const merged = []; const seen = new Set();
+  const settled = await Promise.allSettled(langs.map(lang => searchPage(query, (prevTokens && prevTokens[lang]) || null, order, lang)));
+  const results = settled.map(s => s.status === 'fulfilled' ? s.value : null);
+  if (results.every(r => r === null)) { // every language errored → surface the real reason (usually quota)
+    const bad = settled.find(s => s.status === 'rejected');
+    throw bad ? bad.reason : new Error('Search failed');
+  }
+  const tokens = {}; langs.forEach((lang, i) => { tokens[lang] = results[i] ? results[i].next : null; });
+  // round-robin interleave across languages
+  const lists = results.map(r => r ? r.ids : []); const merged = []; const seen = new Set();
   for (let i = 0; ; i++) {
     let any = false;
     for (const list of lists) { const id = list[i]; if (id) { any = true; if (!seen.has(id)) { seen.add(id); merged.push(id); } } }
@@ -1034,18 +1039,21 @@ function showFeed() {
   let items;
   if (channelView) {
     items = channelVideos.filter(v => !isBlocked(v)); // viewing a single channel (already newest-first)
-  } else if (activeFilters.length && searchQuery === activeFilters.join(' ') && searchResults.length) {
-    // A real YouTube search: show its results in YouTube's own relevance order. No title re-filtering.
-    items = searchResults.filter(v => !isBlocked(v));
+  } else if (activeFilters.length && secrets.apiKey) {
+    // A real YouTube search: show ONLY its results, in YouTube's relevance order. Never word-match
+    // the pool — an empty list here means the search is loading or failed (see the toast), not junk.
+    items = (searchQuery === activeFilters.join(' ') ? searchResults : []).filter(v => !isBlocked(v));
+  } else if (activeFilters.length) {
+    // No API key → offline word-match of the local pool (the only time we ever match on title).
+    const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean);
+    const watched = new Set(data.history.map(h => h.id));
+    items = pool.filter(v => !watched.has(v.id) && words.some(w => normText(v.title+' '+(v.description||'')+' '+(v.channel||'')).includes(w)));
+    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0));
   } else {
-    // Home feed (no query) or offline fallback: the local pool, newest first.
+    // Home feed (no query): the local pool, newest first.
     const watched = new Set(data.history.map(h => h.id));
     items = pool.filter(v => !watched.has(v.id));
-    if (activeFilters.length) { // offline / no-key fallback only: loose word match so something shows
-      const words = normText(activeFilters.join(' ')).split(/\s+/).filter(Boolean);
-      items = items.filter(v => { const hay = normText(v.title+' '+(v.description||'')+' '+(v.channel||'')); return words.some(w => hay.includes(w)); });
-    }
-    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0)); // newest uploads first
+    items.sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0));
     refreshStaleLive();
   }
   lastResults = items;
@@ -1075,8 +1083,7 @@ async function runSearch() {
   showFeed(); // clear the old view while we fetch
   if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your free YouTube API key to search ⚙'); return; }
   flash('Searching YouTube…');
-  await findMore(); // page 1 (YouTube order)
-  if (searchResults.length < 45 && pageState && pageState.token) await findMore(); // pull a 2nd page for a fuller feed
+  await findMore(); // one YouTube search (per language); "Find more" pulls further pages on demand
 }
 
 function exitChannel() { channelView = null; channelVideos = []; }
@@ -1224,7 +1231,7 @@ function rerenderFilter() {
   $('empty').textContent = shown.length ? '' :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
      (channelView ? 'No videos found for this channel.' :
-      (activeFilters.length ? 'Nothing saved matches these filters — tap “🔍 Find more on YouTube”.' :
+      (activeFilters.length ? (secrets.apiKey ? 'No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.' : 'Add your free YouTube API key in ⚙ to search.') :
        (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
 }
 
@@ -2185,7 +2192,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v57'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v58'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
