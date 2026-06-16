@@ -254,6 +254,7 @@
       <div id="sugBox" class="sugbox"></div>
     </div>
     <button class="primary" id="searchBtn">Add</button>
+    <button class="icon-btn" id="installBtn" title="Install RePlay as an app" style="display:none">⬇ Install</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
     <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
@@ -571,6 +572,17 @@ setInterval(() => { if (document.visibilityState==='visible') renderBudgets(); }
 
 /* ============================== SETTINGS UI ============================== */
 $('gearBtn').onclick = () => { if ($('panel').classList.contains('open')) history.back(); else { $('panel').classList.add('open'); pushNav(); } };
+
+// Reliable in-app install button (Brave/Chrome don't always surface the address-bar install icon).
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; $('installBtn').style.display = ''; });
+$('installBtn').onclick = async () => {
+  if (!deferredPrompt) { toast('Already installed, or your browser handles install from the menu (⋮ → Install).'); return; }
+  deferredPrompt.prompt();
+  try { await deferredPrompt.userChoice; } catch {}
+  deferredPrompt = null; $('installBtn').style.display = 'none';
+};
+window.addEventListener('appinstalled', () => { deferredPrompt = null; $('installBtn').style.display = 'none'; toast('RePlay installed ✓'); });
 
 // ---- Blackout: full-screen dark window. Playback keeps running underneath; ✕ closes it. ----
 let wakeLock = null;
