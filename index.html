@@ -254,7 +254,7 @@
       <div id="sugBox" class="sugbox"></div>
     </div>
     <button class="primary" id="searchBtn">Add</button>
-    <button class="icon-btn" id="installBtn" title="Install RePlay as an app" style="display:none">⬇ Install</button>
+    <button class="icon-btn" id="installBtn" title="Install RePlay as an app">⬇ Install</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
     <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
@@ -502,7 +502,7 @@ const normText = s => decodeEntities(String(s||''))
   .trim();
 function flash(msg, rich=false) { $('status').innerHTML = rich ? msg : escapeHtml(msg); }
 let toastTimer;
-function toast(msg) { const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),4000); }
+function toast(msg, ms=4000) { const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms); }
 
 function parseISODuration(iso) {
   const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso || '');
@@ -575,12 +575,13 @@ $('gearBtn').onclick = () => { if ($('panel').classList.contains('open')) histor
 
 // Reliable in-app install button (Brave/Chrome don't always surface the address-bar install icon).
 let deferredPrompt = null;
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+if (isStandalone()) $('installBtn').style.display = 'none'; // already running as the installed app
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; $('installBtn').style.display = ''; });
 $('installBtn').onclick = async () => {
-  if (!deferredPrompt) { toast('Already installed, or your browser handles install from the menu (⋮ → Install).'); return; }
-  deferredPrompt.prompt();
-  try { await deferredPrompt.userChoice; } catch {}
-  deferredPrompt = null; $('installBtn').style.display = 'none';
+  if (deferredPrompt) { deferredPrompt.prompt(); try { await deferredPrompt.userChoice; } catch {} deferredPrompt = null; $('installBtn').style.display = 'none'; return; }
+  // No prompt available → Brave usually thinks an old copy is still installed. Walk them through it.
+  toast('Brave thinks RePlay is still installed. Open  brave://apps , remove RePlay, then reload — or use ☰ menu → "Install RePlay…".', 6000);
 };
 window.addEventListener('appinstalled', () => { deferredPrompt = null; $('installBtn').style.display = 'none'; toast('RePlay installed ✓'); });
 
