@@ -318,10 +318,12 @@
     <p style="font-size:12px;color:var(--muted)">Liked/playlist <b>CSV</b> → the list above (fetches details, ~1 unit per 50 videos). Watch-history <b>JSON</b> → History (free). Note: Google usually doesn’t include “Watch Later” in Takeout.</p>
 
     <hr class="hr">
-    <h3>Auto-fill <span style="color:var(--muted);font-weight:400">— keep your feed fresh, cheaply</span></h3>
-    <p>When you open RePlay, pull new uploads from your <b>followed + auto-tracked channels</b> (collected from your searches). This is the <b>cheap</b> path: ~1 unit per channel, not 100 per topic.</p>
-    <label class="switch"><input type="checkbox" id="autoFill"> Auto-update from my channels when I open RePlay</label>
-    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Up to</span><input class="num" id="autoFillPerDay" type="number" min="1" value="5"><span class="lbl" style="min-width:auto">times/day</span></div>
+    <h3>Auto-fill feed <span style="color:var(--muted);font-weight:400">— keep your home feed fresh</span></h3>
+    <p>A few times a day, RePlay pulls the <b>latest videos</b> for your <b>👍 liked topics</b> (a real YouTube search) plus new uploads from your <b>followed channels</b>, into your home feed (the Search tab with no search active). Videos are kept for the retention window below, then drop off — so your feed is always recent.</p>
+    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my feed when I open RePlay</label>
+    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Up to</span><input class="num" id="autoFillPerDay" type="number" min="1" max="24" value="4"><span class="lbl" style="min-width:auto">times/day</span></div>
+    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Pages per topic</span><input class="num" id="feedTopicPages" type="number" min="0" max="5" value="2"><span class="lbl" style="min-width:auto">(0 = channels only; bigger = more videos, more quota)</span></div>
+    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Keep videos for</span><input class="num" id="feedRetentionDays" type="number" min="1" max="60" value="7"><span class="lbl" style="min-width:auto">days</span></div>
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
 
     <hr class="hr">
@@ -440,7 +442,9 @@ function defaultData() {
       verticalMaxSec: 60,
       langs: [],         // languages to search in, e.g. ["es","en"] — empty = no language filter
       topics: [],
-      autoFill: { enabled: false, perDay: 5 },
+      autoFill: { enabled: false, perDay: 4 },
+      feedTopicPages: 2,       // pages of latest topic videos pulled per scheduled refresh
+      feedRetentionDays: 7,    // videos drop out of the home-feed pool after this many days
       budgets: {
         shorts: { enabled:false, limit:3, windowMin:60 },
         videos: { enabled:false, limit:5, windowMin:60 },
@@ -1637,26 +1641,74 @@ function renderLed() {
 }
 /* ---- Auto-fill: refresh topics a few times/day on open (throttled) ---- */
 function renderAutoFill() {
-  const af = data.prefs.autoFill || { enabled:false, perDay:5 };
+  const af = data.prefs.autoFill || { enabled:false, perDay:4 };
   $('autoFill').checked = !!af.enabled;
-  $('autoFillPerDay').value = af.perDay || 5;
+  $('autoFillPerDay').value = af.perDay || 4;
+  $('feedTopicPages').value = (data.prefs.feedTopicPages != null ? data.prefs.feedTopicPages : 2);
+  $('feedRetentionDays').value = data.prefs.feedRetentionDays || 7;
   const ch = allTrackedChannels().length;
-  $('autoFillEst').textContent = ch
-    ? `≈ ${ch * (af.perDay||5)} units/day  (${ch} channels × ${af.perDay||5} cheap checks).  Your budget is ~10,000/day.`
-    : 'Do a search first — channels get auto-tracked from your results.';
+  const topics = (data.prefs.topics||[]).filter(Boolean).length;
+  const pages = Math.max(0, +data.prefs.feedTopicPages || 0);
+  const langs = (data.prefs.langs||[]).filter(Boolean).length || 1;
+  const perRefresh = ch + topics * pages * langs * 100; // channels ~1 unit each; topic search ~100 units/page/lang
+  $('autoFillEst').textContent = `≈ ${perRefresh * (af.perDay||4)} units/day  (${af.perDay||4}× refresh · ${ch} channels + ${topics} topics × ${pages} pages × ${langs} lang).  Budget ~10,000/day.`;
   const tl = $('trackedLabel'); if (tl) tl.textContent = `🤖 Auto-tracked (${tracked.length}, from your searches)`;
 }
 $('autoFill').onchange = () => { data.prefs.autoFill.enabled = $('autoFill').checked; touchPrefs(); renderAutoFill(); };
-$('autoFillPerDay').onchange = () => { data.prefs.autoFill.perDay = Math.max(1, +$('autoFillPerDay').value||1); touchPrefs(); renderAutoFill(); };
+$('autoFillPerDay').onchange = () => { data.prefs.autoFill.perDay = Math.min(24, Math.max(1, +$('autoFillPerDay').value||4)); touchPrefs(); renderAutoFill(); };
+$('feedTopicPages').onchange = () => { data.prefs.feedTopicPages = Math.min(5, Math.max(0, +$('feedTopicPages').value||0)); touchPrefs(); renderAutoFill(); };
+$('feedRetentionDays').onchange = () => { data.prefs.feedRetentionDays = Math.min(60, Math.max(1, +$('feedRetentionDays').value||7)); touchPrefs(); prunePool(); renderPoolCount(); renderPoolStat(); };
+
+// Drop pool videos older than the retention window (by when they entered the pool).
+function prunePool() {
+  const days = Math.max(1, +data.prefs.feedRetentionDays || 7);
+  const cutoff = Date.now() - days*24*3600e3;
+  const before = pool.length;
+  pool = pool.filter(v => (v.ts||0) >= cutoff);
+  if (pool.length !== before) { data.pool = pool; savePool(); }
+}
+// The "big fetch": latest videos for each liked topic (a real YouTube search), into the pool.
+async function bigTopicFetch() {
+  const topics = (data.prefs.topics||[]).filter(Boolean);
+  const pages = Math.max(0, +data.prefs.feedTopicPages || 0);
+  if (!topics.length || !pages || !secrets.apiKey) return 0;
+  const allIds = [];
+  for (const t of topics) {
+    let tokens = null;
+    for (let p = 0; p < pages; p++) {
+      try {
+        const { ids, tokens: nt } = await searchPageMulti(t, tokens, 'date'); // 'date' = newest first
+        allIds.push(...ids); tokens = nt;
+        if (!Object.values(nt).some(Boolean)) break; // no further pages
+      } catch { break; } // quota/error → stop this topic, keep what we have
+    }
+  }
+  if (!allIds.length) return 0;
+  return addToPool(await fetchVideos(Array.from(new Set(allIds))));
+}
+// One scheduled refresh: cheap channel uploads + big topic fetch + prune. Throttled to perDay.
+let _refreshing = false;
+async function refreshFeedNow(force) {
+  if (_refreshing) return; _refreshing = true;
+  try {
+    await autoSyncChannels().catch(()=>{});
+    const added = await bigTopicFetch().catch(()=>0);
+    prunePool();
+    if ((added || force) && currentTab==='search' && !activeFilters.length) showFeed();
+    renderPoolStat();
+  } finally { _refreshing = false; }
+}
 function maybeAutoFill() {
+  prunePool(); // always age-out old videos on open
   const af = data.prefs.autoFill;
-  if (!af || !af.enabled || !secrets.apiKey || !allTrackedChannels().length) return;
+  if (!af || !af.enabled || !secrets.apiKey) return;
   const last = +readJSON('replay.autoFillAt', 0);
   const gap = 24*3600e3 / Math.max(1, af.perDay);   // min time between auto-refreshes
   if (Date.now() - last < gap) return;
   writeJSON('replay.autoFillAt', Date.now());
-  autoSyncChannels();
+  refreshFeedNow();
 }
+setInterval(maybeAutoFill, 30*60000); // also check ~every 30 min while the app stays open
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
 async function autoSyncChannels() {
@@ -2211,7 +2263,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v59'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v60'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.

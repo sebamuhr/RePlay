@@ -1,7 +1,7 @@
 /* RePlay service worker.
    Network-first for the app shell so updates show immediately when online,
    with cache fallback so it still works offline. */
-const CACHE = 'replay-v59';
+const CACHE = 'replay-v60';
 const ASSETS = [
   './',
   './index.html',
