@@ -897,37 +897,6 @@ function addFilter(t) {
   pushNav();
   runSearch(); // a normal YouTube search for this query, shown in YouTube's order
 }
-// Followed/auto-tracked channels whose NAME matches the query — so "teletrece" finds your channel.
-function matchChannelsByName(q) {
-  const nq = normText(q); if (!nq) return [];
-  const seen = new Set(); const out = [];
-  for (const c of [...(data.followed||[]), ...(tracked||[])]) {
-    if (!c.id || seen.has(c.id)) continue;
-    const nt = normText(c.title || '');
-    if (nt && (nt.includes(nq) || nq.includes(nt))) { seen.add(c.id); out.push(c); } // either contains the other
-  }
-  return out;
-}
-async function fetchChannelUploadsIntoPool(id) { // cheap: ~1 unit playlist + ~1 unit videos
-  try {
-    const d = await (await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=25&playlistId=${uploadsPlaylist(id)}&key=${secrets.apiKey}`)).json();
-    if (d.error) throw new Error(d.error.message);
-    const ids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
-    return addToPool(await fetchVideos(ids));
-  } catch { return 0; }
-}
-const _enriched = new Set(); // queries we've already pulled fresh results for this session (don't re-spend quota)
-async function enrichFeed() {
-  if (!secrets.apiKey || !activeFilters.length || homeSub === 'channels') return;
-  const q = activeFilters.join(' '); const key = normText(q);
-  if (_enriched.has(key)) return; _enriched.add(key);
-  // 1) Your channels by name (cheap) — pulls e.g. Teletrece's recent news in, which match via channel name.
-  let added = 0;
-  for (const c of matchChannelsByName(q).slice(0, 3)) added += await fetchChannelUploadsIntoPool(c.id);
-  if (added && currentTab === 'search') showFeed();
-  // 2) A real YouTube search for the query (so "news today" returns actual fresh news, not pool scraps).
-  await findMore();
-}
 function removeFilter(t) {
   activeFilters = activeFilters.filter(x => x !== t);
   renderActiveFilters();
@@ -2263,7 +2232,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v60'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v61'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
