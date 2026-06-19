@@ -348,7 +348,7 @@
     <hr class="hr">
     <h3>Pool (home feed)</h3>
     <p>Your home feed (no search active) is a local cache of videos. Searching no longer adds to it, but if it got filled with junk, empty it here.</p>
-    <div class="row"><span id="poolCount" class="lbl" style="min-width:auto">—</span><button id="clearPool">🗑 Clear pool</button></div>
+    <div class="row"><span id="poolCount" class="lbl" style="min-width:auto">—</span><button id="clearPool">🗑 Clear pool</button><button id="refetchPool">🔄 Clear &amp; re-fetch</button></div>
 
     <hr class="hr">
     <h3>Vertical videos</h3>
@@ -707,6 +707,20 @@ $('clearPool').onclick = () => {
   savePool(); saveTracked(); renderPoolCount(); renderPoolStat();
   if (currentTab === 'search' && !activeFilters.length) showFeed();
   toast('Pool cleared.');
+};
+// Clear the pool, then immediately refill it from your liked topics + followed channels so every
+// video comes back fresh (with real v64 orientation) instead of leaving the feed empty.
+$('refetchPool').onclick = async () => {
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key first ⚙'); return; }
+  if (!confirm(`Empty the pool (${pool.length} videos) and re-fetch fresh ones from your topics + channels? Your History, Favorites, Watch Later, Music and followed channels are NOT touched.`)) return;
+  pool = []; data.pool = pool; tracked = []; data.tracked = tracked; pageState = null;
+  savePool(); saveTracked(); renderPoolCount(); renderPoolStat();
+  if (currentTab === 'search' && !activeFilters.length) showFeed();
+  const btn = $('refetchPool'); btn.disabled = true; btn.textContent = '🔄 Re-fetching…';
+  toast('Re-fetching your feed…');
+  try { await refreshFeedNow(true); toast(`Re-fetched — ${pool.length} videos in your feed.`); }
+  catch (e) { toast(apiErr(e)); }
+  finally { btn.disabled = false; btn.innerHTML = '🔄 Clear &amp; re-fetch'; renderPoolCount(); renderPoolStat(); }
 };
 renderPoolCount();
 
@@ -2353,7 +2367,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v64'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v65'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
