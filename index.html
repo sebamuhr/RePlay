@@ -978,15 +978,20 @@ async function fetchVideos(ids) {
   const out = [];
   for (let i=0; i<ids.length; i+=50) {
     const batch = ids.slice(i, i+50);
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${batch.join(',')}&key=${secrets.apiKey}`;
+    // part=player + maxWidth makes YouTube return embedWidth/embedHeight sized to the video's real
+    // aspect ratio → genuine orientation (embedHeight>embedWidth = vertical). Costs 0 extra quota
+    // (videos.list is 1 unit regardless of parts). Falls back to the duration guess when absent.
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,player&maxWidth=480&id=${batch.join(',')}&key=${secrets.apiKey}`;
     const d = await (await fetch(url)).json();
     if (d.error) throw new Error(d.error.message || 'API error');
     (d.items||[]).forEach(v => {
       const dur = parseISODuration(v.contentDetails.duration);
+      const ew = +(v.player && v.player.embedWidth) || 0, eh = +(v.player && v.player.embedHeight) || 0;
+      const vertical = (ew && eh) ? eh > ew : (dur>0 && dur<=60); // real ratio when we have it, else duration guess
       out.push({ id:v.id, title:decodeEntities(v.snippet.title), channel:decodeEntities(v.snippet.channelTitle), channelId:v.snippet.channelId,
         description:decodeEntities(v.snippet.description||''), tags:v.snippet.tags||[],
         thumb:(v.snippet.thumbnails.medium||v.snippet.thumbnails.default).url,
-        duration:dur, isShort: dur>0 && dur<=60, publishedAt: v.snippet.publishedAt, live: v.snippet.liveBroadcastContent || 'none' });
+        duration:dur, isShort: dur>0 && dur<=60, vertical, publishedAt: v.snippet.publishedAt, live: v.snippet.liveBroadcastContent || 'none' });
     });
   }
   return out;
@@ -1074,7 +1079,7 @@ async function refreshStaleLive() {
     const fresh = await fetchVideos(stale.slice(0, 50));
     const byId = new Map(fresh.map(v => [v.id, v]));
     let changed = false;
-    pool.forEach(v => { const f = byId.get(v.id); if (f && (f.duration!==v.duration || f.live!==v.live)) { v.duration=f.duration; v.live=f.live; v.isShort=f.isShort; v.publishedAt=f.publishedAt||v.publishedAt; changed=true; } });
+    pool.forEach(v => { const f = byId.get(v.id); if (f && (f.duration!==v.duration || f.live!==v.live)) { v.duration=f.duration; v.live=f.live; v.isShort=f.isShort; if (typeof f.vertical==='boolean') v.vertical=f.vertical; v.publishedAt=f.publishedAt||v.publishedAt; changed=true; } });
     if (changed) { savePool(); if (currentTab==='search' && !channelView) showFeed(); }
   } catch {}
 }
@@ -1182,11 +1187,12 @@ function isBlocked(v) {
 }
 
 /* ============================== RENDER LIST ============================== */
-// "Vertical" = short enough to be a Short (our orientation proxy; YouTube has no orientation field).
-// A manual override (set from the card's phone toggle) always wins over the duration guess.
+// Orientation, best signal first: manual override → real embed aspect ratio (player part) →
+// duration guess (legacy/cached videos with no `vertical` flag).
 function isVert(v) {
   const o = data.orient && data.orient[v.id];
   if (o) return o.o === 'vert';
+  if (typeof v.vertical === 'boolean') return v.vertical;
   return v.duration > 0 && v.duration <= (data.prefs.verticalMaxSec || 60);
 }
 function setOrient(v, o) {
@@ -1497,7 +1503,7 @@ function removeFromList(listName, id) {
 }
 
 /* ============================== LISTS ============================== */
-function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:(v.description||'').slice(0,DESC_MAX),tags:(v.tags||[]).slice(0,12),thumb:v.thumb,duration:v.duration,isShort:v.isShort,publishedAt:v.publishedAt,live:v.live||'none'}; }
+function stripVideo(v){ return {id:v.id,title:v.title,channel:v.channel,channelId:v.channelId,description:(v.description||'').slice(0,DESC_MAX),tags:(v.tags||[]).slice(0,12),thumb:v.thumb,duration:v.duration,isShort:v.isShort,vertical:v.vertical,publishedAt:v.publishedAt,live:v.live||'none'}; }
 function toggleList(listName, v) {
   const list = data[listName];
   const i = list.findIndex(x=>x.id===v.id);
@@ -2347,7 +2353,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v63'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v64'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
