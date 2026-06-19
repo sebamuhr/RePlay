@@ -23,7 +23,7 @@
     border-bottom:1px solid var(--line);
     padding:10px 16px calc(10px + env(safe-area-inset-top)); }
   .bar { display:flex; gap:8px; align-items:center; max-width:1100px; margin:0 auto; }
-  .logo { font-weight:800; letter-spacing:-.5px; font-size:20px; user-select:none; white-space:nowrap; }
+  .logo { font-weight:800; letter-spacing:-.5px; font-size:20px; user-select:none; white-space:nowrap; cursor:pointer; }
   .logo span { color:var(--accent); }
 
   input[type=text], input[type=search], input[type=number], input[type=password] {
@@ -109,7 +109,8 @@
   .actions button { padding:6px 9px; font-size:12px; border-radius:8px; }
   .actions button.on { color:var(--good); border-color:#1f3a26; }
   .actions button.orient { padding:6px 8px; line-height:1; }
-  .actions button.orient .ph { display:inline-block; transition:transform .15s; }
+  .actions button.orient .ph { display:inline-flex; align-items:center; transition:transform .15s; }
+  .actions button.orient .ph svg { display:block; }
   .actions button.orient.horiz .ph { transform:rotate(90deg); } /* phone laid on its side = horizontal */
   .actions button.orient.counting { color:var(--accent); border-color:var(--accent); font-weight:700; min-width:30px; } /* 3·2·1 countdown */
   .actions button.music.on { background:rgba(106,176,255,.16); border-color:var(--blue); } /* marked as Music */
@@ -147,13 +148,13 @@
   .modal.open { display:flex; }
   .modal { align-items:flex-start; }
   .player { width:100%; max-width:1000px; max-height:94vh; overflow-y:auto; margin-top:2vh; }
-  .player .frame { position:relative; aspect-ratio:16/9; background:#000 center/cover no-repeat; border-radius:12px; overflow:hidden; }
+  .player .frame { position:sticky; top:0; z-index:3; aspect-ratio:16/9; background:#000 center/cover no-repeat; border-radius:12px; overflow:hidden; }
   /* Shorts: fullscreen, swipe-to-navigate, controls hidden behind "More" */
   #shortSwipe { display:none; }
   #shortMore { display:none; }
   .modal.shorts { padding:0; align-items:stretch; }
   .modal.shorts .player { width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; overflow:hidden; position:relative; }
-  .modal.shorts .frame { width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
+  .modal.shorts .frame { position:relative; top:auto; width:100vw; height:100dvh; aspect-ratio:auto; border-radius:0; }
   .modal.shorts #shortSwipe { display:block; position:absolute; top:0; left:0; right:0; bottom:64px; z-index:4; } /* catches swipe/scroll, but leaves the bottom strip free so YouTube's timebar/controls are tappable */
   #svTrack { display:none; }
   .modal.shorts #svTrack { display:block; position:absolute; left:0; top:0; width:100%; z-index:2; }
@@ -213,11 +214,6 @@
   .suggest .like:hover, .suggest .dislike:hover { filter:none; }
   .filter { background:#10243a; border:1px solid #1f4a6b; color:#9ecbff; }
   .sublabel { font-size:12px; color:var(--muted); margin:16px 0 6px; }
-  .led { width:14px; height:14px; border-radius:50%; cursor:pointer; flex:0 0 auto; border:1px solid #333; transition:background .2s, box-shadow .2s; }
-  .led[data-state="off"] { background:#444; }
-  .led[data-state="green"] { background:var(--good); box-shadow:0 0 7px var(--good); }
-  .led[data-state="red"] { background:var(--accent); box-shadow:0 0 7px var(--accent); }
-  .led[data-state="checking"] { background:var(--warn); box-shadow:0 0 7px var(--warn); }
   .actions button.hide { color:#ff9a9a; }
 
   /* home sub-tabs (Videos / Shorts) */
@@ -226,6 +222,25 @@
   .subtab.active { color:var(--fg); border-color:#444; background:#181818; }
   .playall { margin-left:auto; background:var(--card); border:1px solid var(--line); color:var(--fg); padding:6px 12px; border-radius:8px; font-size:13px; cursor:pointer; }
   .playall:hover { border-color:#444; }
+  .playall.on { background:rgba(106,176,255,.16); border-color:var(--blue); color:#cfe4ff; }
+
+  /* Autoplay reorder queue */
+  .grid.queue { display:flex; flex-direction:column; gap:8px; }
+  .autobar { display:flex; align-items:center; gap:10px; padding:10px 12px; background:#161616; border:1px solid var(--line);
+    border-radius:10px; position:sticky; top:0; z-index:5; }
+  .autobar .ab-play { background:var(--blue); border-color:var(--blue); color:#04121f; font-weight:600; padding:7px 14px; }
+  .autobar .ab-info { color:var(--muted); font-size:12px; }
+  .autobar .ab-clear { margin-left:auto; padding:6px 10px; font-size:12px; }
+  .qrow { display:flex; align-items:center; gap:10px; padding:8px; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+  .qrow.dragover { border-color:var(--blue); }
+  .qrow.playing { border-color:var(--blue); background:rgba(106,176,255,.08); }
+  .qrow .qhandle { cursor:grab; color:var(--muted); font-size:18px; padding:0 2px; user-select:none; touch-action:none; }
+  .qrow .qnum { color:var(--muted); font-size:12px; min-width:20px; text-align:right; }
+  .qrow .qthumb { width:120px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; flex:0 0 auto; cursor:pointer; background:#000; }
+  .qrow .qtitle { flex:1; font-size:13px; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; }
+  .qrow .qmove { display:flex; flex-direction:column; gap:3px; }
+  .qrow .qmove button { padding:2px 9px; font-size:11px; line-height:1.1; }
+  @media (max-width:600px) { .qrow .qthumb { width:88px; } }
 
   /* Blackout overlay — dark the screen while audio keeps playing. The 🌙 lives in the player so you
      can start a video first, then dark the screen. Only offered on small screens. */
@@ -248,19 +263,17 @@
 <body>
 <header>
   <div class="bar">
-    <div class="logo">Re<span>Play</span></div>
+    <div class="logo" id="logo" title="Home — your feed">Re<span>Play</span></div>
     <div class="qwrap">
       <input id="q" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Add a filter and press Enter…" />
       <div id="sugBox" class="sugbox"></div>
     </div>
     <button class="primary" id="searchBtn">Add</button>
     <button class="icon-btn" id="gearBtn" title="Settings">⚙</button>
-    <span id="led" class="led" data-state="off" title="New uploads from followed channels"></span>
   </div>
 
   <div class="subbar">
     <div class="tabs">
-      <button class="tab active" data-tab="search">Search</button>
       <button class="tab" data-tab="history">History</button>
       <button class="tab" data-tab="later">Watch Later</button>
       <button class="tab" data-tab="favorites">Favorites</button>
@@ -278,7 +291,7 @@
     <button class="subtab active" data-sub="videos">🖥 Horizontal</button>
     <button class="subtab" data-sub="shorts">📱 Vertical</button>
     <button class="subtab" data-sub="channels">📺 Channels</button>
-    <button id="playAllBtn" class="playall" title="Play all (autoplay through the list)">▶ Play all</button>
+    <button id="playAllBtn" class="playall" title="Autoplay — reorder the list, then play through it">🎬 Autoplay</button>
   </div>
 
   <div class="chips" id="activeFilters"></div>
@@ -293,7 +306,7 @@
 
     <hr class="hr">
     <h3>Topics <span style="color:var(--muted);font-weight:400">— 👍 fill your feeds · 👎 hide from RePlay</span></h3>
-    <p>Like a topic to fill your Search feed. Dislike <b>any word, topic or name</b> (e.g. <i>football</i>, <i>Trump</i>) to hide every video that mentions it — title, description, tags or channel. A term can only be in one list.</p>
+    <p>Like a topic to fill your feed. Dislike <b>any word, topic or name</b> (e.g. <i>football</i>, <i>Trump</i>) to hide every video that mentions it — title, description, tags or channel. A term can only be in one list.</p>
     <div class="sublabel">👍 Liked (fill your feeds)</div>
     <div class="blocklist" id="topicList"></div>
     <div class="sublabel">👎 Disliked / blocked words (hidden everywhere)</div>
@@ -304,7 +317,7 @@
 
     <hr class="hr">
     <h3>Channels <span style="color:var(--muted);font-weight:400">— 👍 follow · 🚫 hide</span></h3>
-    <p>While watching, use <b>👍 Follow channel</b> or <b>🚫 Hide channel</b>. The LED dot up top turns 🔴 when a followed channel has new uploads — tap it to load them (cheap: ~1 quota unit per channel).</p>
+    <p>While watching, use <b>👍 Follow channel</b> or <b>🚫 Hide channel</b>. New uploads from followed channels are pulled into your feed automatically when you open RePlay (cheap: ~1 quota unit per channel). Use <b>Check for new uploads</b> below to pull them right now.</p>
     <div class="sublabel">👍 Followed</div>
     <div class="blocklist" id="followedList"></div>
     <div class="sublabel">🚫 Hidden channels</div>
@@ -319,9 +332,8 @@
 
     <hr class="hr">
     <h3>Auto-fill feed <span style="color:var(--muted);font-weight:400">— keep your home feed fresh</span></h3>
-    <p>A few times a day, RePlay pulls the <b>latest videos</b> for your <b>👍 liked topics</b> (a real YouTube search) plus new uploads from your <b>followed channels</b>, into your home feed (the Search tab with no search active). Videos are kept for the retention window below, then drop off — so your feed is always recent.</p>
-    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my feed when I open RePlay</label>
-    <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Up to</span><input class="num" id="autoFillPerDay" type="number" min="1" max="24" value="4"><span class="lbl" style="min-width:auto">times/day</span></div>
+    <p>When you open RePlay and the newest video in your feed is more than <b>2 hours old</b>, RePlay pulls the <b>latest videos</b> for your <b>👍 liked topics</b> (a real YouTube search) plus new uploads from your <b>followed channels</b> into your feed (tap the <b>RePlay</b> logo). If nothing new turns up, it waits another 2 hours before trying again. This only happens when you open the app — never silently in the background. Videos are kept for the retention window below, then drop off.</p>
+    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my feed when I open RePlay (every 2 hours)</label>
     <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Pages per topic</span><input class="num" id="feedTopicPages" type="number" min="0" max="5" value="2"><span class="lbl" style="min-width:auto">(0 = channels only; bigger = more videos, more quota)</span></div>
     <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Keep videos for</span><input class="num" id="feedRetentionDays" type="number" min="1" max="60" value="7"><span class="lbl" style="min-width:auto">days</span></div>
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
@@ -386,10 +398,11 @@
         <div class="actions">
           <button id="pLater">＋ Watch Later</button>
           <button id="pFav">★ Favorite</button>
-          <button id="pFollow">👍 Follow channel</button>
-          <button id="pHideCh">🚫 Hide channel</button>
+          <button id="pOrient" class="orient" type="button" title="Switch orientation"></button>
+          <button id="pMusic" class="music" type="button" title="Mark as Music">🎵</button>
           <button id="pHideVid">🚫 Not interested</button>
-          <a id="pOpen" href="#" target="_blank" rel="noopener"><button type="button">Open on YouTube ↗</button></a>
+          <button id="pHideCh">🚫 Hide channel</button>
+          <button id="pFollow">👍 Follow channel</button>
           <button id="closeModal">Close ✕</button>
         </div>
       </div>
@@ -442,7 +455,7 @@ function defaultData() {
       verticalMaxSec: 60,
       langs: [],         // languages to search in, e.g. ["es","en"] — empty = no language filter
       topics: [],
-      autoFill: { enabled: false, perDay: 4 },
+      autoFill: { enabled: true },
       feedTopicPages: 2,       // pages of latest topic videos pulled per scheduled refresh
       feedRetentionDays: 7,    // videos drop out of the home-feed pool after this many days
       budgets: {
@@ -1198,6 +1211,7 @@ function rerenderFilter() {
   document.querySelector('.subtab[data-sub="channels"]').style.display = channelView ? 'none' : ''; // not while inside a channel
   document.querySelectorAll('.subtab').forEach(s => s.classList.toggle('active', s.dataset.sub===homeSub));
   $('playAllBtn').style.display = (homeSub==='channels') ? 'none' : '';
+  updateAutoBtn();
   if (homeSub === 'channels' && !channelView) { renderChannelsSub(); return; }
 
   const allowed = visibleList(lastResults, false).filter(v => !isBlocked(v)); // blocks already applied; keep both kinds
@@ -1209,6 +1223,7 @@ function rerenderFilter() {
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `📱 Vertical (${shorts.length})`;
 
+  if (autoplayMode) { renderQueue(shown); return; }
   $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
   if (!channelView) { // Find-more (quota) only on the normal feed, not in a channel view
@@ -1272,11 +1287,56 @@ async function renderChannelsSub() {
     $('empty').textContent = list.length ? '' :
       (secrets.apiKey ? 'No channels found.' : 'No match in your channels — add your API key to search all of YouTube.');
   } else {
-    const list = (data.followed||[]).map(c => ({ id:c.id, title:c.title, description:'', thumb:(c.thumb&&c.thumb!=='none')?c.thumb:'' }));
+    // No search → suggest channels you DON'T already follow, so you can grow the pool.
+    const hidden = new Set(data.hiddenChannels.map(c => c.id));
+    const byId = new Map();
+    const add = (id, title, thumb, description='') => {
+      if (!id || byId.has(id) || isFollowed(id) || hidden.has(id)) return;
+      byId.set(id, { id, title: title || id, description, thumb: (thumb && thumb !== 'none') ? thumb : '' });
+    };
+    tracked.forEach(c => add(c.id, c.title, c.thumb));       // auto-tracked, already ranked by score
+    pool.forEach(v => add(v.channelId, v.channel));          // any channel seen in your feed
+    discoverResults.forEach(c => add(c.id, c.title, c.thumb, c.description)); // YouTube topic discoveries
+    const list = Array.from(byId.values()).slice(0, 80);
     renderChannelCards(list);
-    flash(`<b>${list.length}</b> followed channels`, true);
-    $('empty').textContent = list.length ? '' : 'Type a name in the search bar to find channels, or follow some from videos.';
+    addDiscoverChannelsBtn();
+    flash(`<b>${list.length}</b> channels to discover — 👍 Follow some to enrich your feed`, true);
+    $('empty').textContent = list.length ? '' :
+      (secrets.apiKey ? 'Tap “🔄 Discover more channels” to find channels for your 👍 liked topics, or follow some from videos.'
+                      : 'Add your API key in ⚙ (and some 👍 liked topics) to discover channels.');
   }
+}
+// "Discover more channels" footer — finds channels for your liked topics (free key, ~100 units/topic).
+let discoverResults = [];
+function addDiscoverChannelsBtn() {
+  const wrap = document.createElement('div'); wrap.className = 'chmore';
+  const b = document.createElement('button'); b.className = 'primary'; b.id = 'discoverCh';
+  b.textContent = '🔄 Discover more channels';
+  b.onclick = () => discoverChannels();
+  wrap.appendChild(b); $('grid').appendChild(wrap);
+}
+async function discoverChannels() {
+  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key to discover channels ⚙'); return; }
+  const topics = (data.prefs.topics || []).filter(Boolean);
+  if (!topics.length) { $('panel').classList.add('open'); toast('Add some 👍 liked topics in ⚙ first.'); return; }
+  const btn = $('discoverCh'); if (btn) { btn.disabled = true; btn.textContent = 'Discovering…'; }
+  try {
+    const lang = (searchLangs()[0] && searchLangs()[0] !== '') ? '&relevanceLanguage=' + searchLangs()[0] : '';
+    const seen = new Set(discoverResults.map(c => c.id));
+    let found = 0;
+    for (const t of topics) {
+      const res = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=10&q=${encodeURIComponent(t)}${lang}&key=${secrets.apiKey}`)).json();
+      if (res.error) throw new Error(res.error.message);
+      (res.items || []).forEach(it => {
+        const id = it.id.channelId;
+        if (!id || seen.has(id)) return; seen.add(id);
+        discoverResults.push({ id, title: decodeEntities(it.snippet.title), description: decodeEntities(it.snippet.description || ''), thumb: (it.snippet.thumbnails.medium || it.snippet.thumbnails.default || {}).url || '' });
+        found++;
+      });
+    }
+    renderChannelsSub();
+    if (!found) toast('No new channels found for your topics.');
+  } catch (e) { flash(apiErr(e)); if (btn) { btn.disabled = false; btn.textContent = '🔄 Discover more channels'; } }
 }
 // "Fetch new channels" footer — pulls the next page of YouTube results for the current query.
 function addFetchMoreChannelsBtn() {
@@ -1371,6 +1431,23 @@ function growCards() {
   }
 }
 
+// One clear "switch orientation" glyph (phone + rotate arrow), reused on cards and in the player.
+const ORIENT_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="4" width="9" height="16" rx="1.6"/><path d="M5.4 10 A6 6 0 0 1 13.5 5"/><polyline points="4.7 6.8 5.4 10.2 8.7 9.4"/></svg>';
+const orientInner = () => `<span class="ph">${ORIENT_SVG}</span>`;
+// Wire an orient button: 3·2·1 countdown, then flip the video's orientation (re-buckets it).
+function wireOrient(btn, v, after) {
+  let timer = null;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (timer) { clearInterval(timer); timer = null; btn.classList.remove('counting'); btn.innerHTML = orientInner(); return; }
+    const target = isVert(v) ? 'horiz' : 'vert';
+    let n = 3; btn.classList.add('counting'); btn.textContent = n;
+    timer = setInterval(() => {
+      if (--n > 0) { btn.textContent = n; return; }
+      clearInterval(timer); timer = null; setOrient(v, target); if (after) after();
+    }, 1000);
+  };
+}
 function card(v) {
   const inLater = data.watchLater.some(x=>x.id===v.id);
   const inFav = data.favorites.some(x=>x.id===v.id);
@@ -1390,7 +1467,7 @@ function card(v) {
       <div class="actions">
         <button class="later ${inLater?'on':''}">${inLater?'✓ Later':'＋ Later'}</button>
         <button class="fav ${inFav?'on':''}">${inFav?'★ Fav':'☆ Fav'}</button>
-        <button class="orient${isVert(v)?'':' horiz'}" title="${isVert(v)?'Vertical — click to mark as Horizontal':'Horizontal — click to mark as Vertical'}"><span class="ph">📱</span></button>
+        <button class="orient${isVert(v)?'':' horiz'}" title="${isVert(v)?'Vertical — click to switch to Horizontal':'Horizontal — click to switch to Vertical'}">${orientInner()}</button>
         <button class="music ${inMusic?'on':''}" title="${inMusic?'In Music — click to remove':'Mark as Music'}">🎵</button>
         ${currentTab==='search' ? '<button class="hide" title="Not interested — hide this video">🚫</button>' : ''}
         ${currentTab!=='search' ? '<button class="remove">✕ Remove</button>' : ''}
@@ -1404,27 +1481,7 @@ function card(v) {
   el.querySelector('.later').onclick = (e) => { e.stopPropagation(); toggleList('watchLater', v); };
   el.querySelector('.fav').onclick = (e) => { e.stopPropagation(); toggleList('favorites', v); };
   el.querySelector('.music').onclick = (e) => { e.stopPropagation(); toggleList('music', v); };
-  const orientBtn = el.querySelector('.orient');
-  let orientTimer = null;
-  orientBtn.onclick = (e) => {
-    e.stopPropagation();
-    if (orientTimer) { // tapped again mid-countdown → cancel, video stays put
-      clearInterval(orientTimer); orientTimer = null;
-      orientBtn.classList.remove('counting');
-      orientBtn.innerHTML = '<span class="ph">📱</span>';
-      return;
-    }
-    const target = isVert(v) ? 'horiz' : 'vert'; // flip to the other orientation when it fires
-    let n = 3;
-    orientBtn.classList.add('counting');
-    orientBtn.textContent = n; // 3 … 2 … 1 … bum
-    orientTimer = setInterval(() => {
-      n--;
-      if (n > 0) { orientBtn.textContent = n; return; }
-      clearInterval(orientTimer); orientTimer = null;
-      setOrient(v, target); // commit → re-render moves it to the other sub-tab
-    }, 1000);
-  };
+  wireOrient(el.querySelector('.orient'), v);
   const hd = el.querySelector('.hide');
   if (hd) hd.onclick = (e) => { e.stopPropagation(); hideVideo(v); };
   const rm = el.querySelector('.remove');
@@ -1472,17 +1529,17 @@ function followChannel(v) {
   if (!v.channelId) { toast('Channel info missing — re-open this video from a fresh search.'); return; }
   data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== v.channelId); data.hiddenChannelsUpdatedAt = Date.now();
   if (!isFollowed(v.channelId)) data.followed.push({ id:v.channelId, title:v.channel, lastVideoId:v.id, ts:Date.now() });
-  data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); refreshCurrent();
+  data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); refreshCurrent();
   toast(`Following “${v.channel}”.`);
 }
-function unfollowChannel(id) { data.followed = data.followed.filter(c => c.id !== id); data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); refreshCurrent(); }
+function unfollowChannel(id) { data.followed = data.followed.filter(c => c.id !== id); data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); refreshCurrent(); }
 function hideChannel(v) {
   if (!v.channelId) { addDislike(v.channel); return; } // fallback: block by name
   data.followed = data.followed.filter(c => c.id !== v.channelId); data.followedUpdatedAt = Date.now();
   if (!data.hiddenChannels.some(c => c.id === v.channelId)) data.hiddenChannels.push({ id:v.channelId, title:v.channel, ts:Date.now() });
   data.hiddenChannelsUpdatedAt = Date.now();
   pool = pool.filter(x => x.channelId !== v.channelId); savePool();
-  saveData(); renderChannels(); renderLed(); refreshCurrent();
+  saveData(); renderChannels(); refreshCurrent();
   toast(`Hiding channel “${v.channel}”.`);
 }
 function unhideChannel(id) { data.hiddenChannels = data.hiddenChannels.filter(c => c.id !== id); data.hiddenChannelsUpdatedAt = Date.now(); saveData(); renderChannels(); refreshCurrent(); }
@@ -1511,7 +1568,7 @@ function importSubs(text) {
     data.followed.push({ id, title, lastVideoId:'', ts:Date.now() });
     existing.add(id); added++;
   });
-  if (added) { data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderLed(); renderAutoFill(); }
+  if (added) { data.followedUpdatedAt = Date.now(); saveData(); renderChannels(); renderAutoFill(); }
   toast(added ? `Imported ${added} channel${added>1?'s':''} ✓  — turn on Auto-fill to pull their videos.` : 'No new channels found in that file.');
 }
 $('importSubsBtn').onclick = () => $('importSubsFile').click();
@@ -1561,58 +1618,11 @@ function importHistoryJSON(text) {
 $('importVidsBtn').onclick = () => $('importVidsFile').click();
 $('importVidsFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { await importVids(f); } catch { toast('Could not read that file.'); } e.target.value=''; };
 
-/* ---- "New uploads?" LED for followed channels (cheap: ~1 unit/channel) ---- */
 const uploadsPlaylist = id => 'UU' + id.slice(2);   // a channel's uploads playlist id
-let ledNew = []; // channel ids that have new uploads since last seen
-async function channelLatest(id) {
-  const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=1&playlistId=${uploadsPlaylist(id)}&key=${secrets.apiKey}`;
-  const d = await (await fetch(url)).json();
-  if (d.error) throw new Error(d.error.message || 'API error');
-  return (d.items && d.items[0] && d.items[0].contentDetails.videoId) || null;
-}
-async function checkChannels() {
-  if (!data.followed.length || !secrets.apiKey) { ledNew = []; renderLed(); return; }
-  setLed('checking');
-  const results = await Promise.allSettled(data.followed.map(async c => {
-    const latest = await channelLatest(c.id);
-    return (latest && latest !== c.lastVideoId) ? c.id : null;
-  }));
-  ledNew = results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value);
-  renderLed();
-}
-async function fetchChannelNew() {
-  if (!secrets.apiKey) { $('panel').classList.add('open'); toast('Add your API key ⚙'); return; }
-  if (!data.followed.length) { toast('Follow a channel first (▶ a video → 👍 Follow channel).'); return; }
-  if (!ledNew.length) { checkChannels(); toast('Checking your channels…'); return; }
-  setLed('checking');
-  try {
-    let ids = [];
-    for (const c of data.followed.filter(c => ledNew.includes(c.id))) {
-      const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=10&playlistId=${uploadsPlaylist(c.id)}&key=${secrets.apiKey}`;
-      const d = await (await fetch(url)).json();
-      if (d.error) throw new Error(d.error.message);
-      const vids = (d.items||[]).map(i => i.contentDetails.videoId).filter(Boolean);
-      ids.push(...vids); if (vids[0]) c.lastVideoId = vids[0];
-    }
-    data.followedUpdatedAt = Date.now();
-    const added = addToPool(await fetchVideos(Array.from(new Set(ids))));
-    saveData(); ledNew = []; renderLed();
-    if (currentTab==='search') { activeFilters = []; renderActiveFilters(); showFeed(); }
-    toast(added ? `Pulled in ${added} new video${added>1?'s':''} from your channels.` : 'Already up to date.');
-  } catch (e) { toast(apiErr(e)); renderLed(); }
-}
-function setLed(state){ const el = $('led'); if (el) el.dataset.state = state; }
-function renderLed() {
-  const el = $('led'); if (!el) return;
-  if (!data.followed.length) { el.dataset.state='off'; el.title='Follow channels to track new uploads'; }
-  else if (ledNew.length) { el.dataset.state='red'; el.title=`${ledNew.length} followed channel(s) have new uploads — tap to load`; }
-  else { el.dataset.state='green'; el.title='Followed channels up to date — tap to re-check'; }
-}
-/* ---- Auto-fill: refresh topics a few times/day on open (throttled) ---- */
+/* ---- Auto-fill: refresh the feed on open when it's gone stale (>2h) ---- */
 function renderAutoFill() {
-  const af = data.prefs.autoFill || { enabled:false, perDay:4 };
+  const af = data.prefs.autoFill || { enabled:true };
   $('autoFill').checked = !!af.enabled;
-  $('autoFillPerDay').value = af.perDay || 4;
   $('feedTopicPages').value = (data.prefs.feedTopicPages != null ? data.prefs.feedTopicPages : 2);
   $('feedRetentionDays').value = data.prefs.feedRetentionDays || 7;
   const ch = allTrackedChannels().length;
@@ -1620,11 +1630,10 @@ function renderAutoFill() {
   const pages = Math.max(0, +data.prefs.feedTopicPages || 0);
   const langs = (data.prefs.langs||[]).filter(Boolean).length || 1;
   const perRefresh = ch + topics * pages * langs * 100; // channels ~1 unit each; topic search ~100 units/page/lang
-  $('autoFillEst').textContent = `≈ ${perRefresh * (af.perDay||4)} units/day  (${af.perDay||4}× refresh · ${ch} channels + ${topics} topics × ${pages} pages × ${langs} lang).  Budget ~10,000/day.`;
+  $('autoFillEst').textContent = `≈ ${perRefresh} units per refresh (at most once / 2h, only on open · ${ch} channels + ${topics} topics × ${pages} pages × ${langs} lang). Budget ~10,000/day.`;
   const tl = $('trackedLabel'); if (tl) tl.textContent = `🤖 Auto-tracked (${tracked.length}, from your searches)`;
 }
 $('autoFill').onchange = () => { data.prefs.autoFill.enabled = $('autoFill').checked; touchPrefs(); renderAutoFill(); };
-$('autoFillPerDay').onchange = () => { data.prefs.autoFill.perDay = Math.min(24, Math.max(1, +$('autoFillPerDay').value||4)); touchPrefs(); renderAutoFill(); };
 $('feedTopicPages').onchange = () => { data.prefs.feedTopicPages = Math.min(5, Math.max(0, +$('feedTopicPages').value||0)); touchPrefs(); renderAutoFill(); };
 $('feedRetentionDays').onchange = () => { data.prefs.feedRetentionDays = Math.min(60, Math.max(1, +$('feedRetentionDays').value||7)); touchPrefs(); prunePool(); renderPoolCount(); renderPoolStat(); };
 
@@ -1655,7 +1664,7 @@ async function bigTopicFetch() {
   if (!allIds.length) return 0;
   return addToPool(await fetchVideos(Array.from(new Set(allIds))));
 }
-// One scheduled refresh: cheap channel uploads + big topic fetch + prune. Throttled to perDay.
+// One refresh pass: cheap channel uploads + big topic fetch + prune.
 let _refreshing = false;
 async function refreshFeedNow(force) {
   if (_refreshing) return; _refreshing = true;
@@ -1667,23 +1676,27 @@ async function refreshFeedNow(force) {
     renderPoolStat();
   } finally { _refreshing = false; }
 }
+// How stale the feed may get before we refetch. Also the cool-off after a fetch that found nothing.
+const FEED_STALE_MS = 2*3600e3; // 2 hours
+// Runs ONLY when the app is opened (not on a background timer). Refetches when the newest pooled
+// video is older than 2h — but only if we haven't already tried within the last 2h (so a fetch
+// that turns up nothing waits another 2h instead of retrying on every open).
 function maybeAutoFill() {
   prunePool(); // always age-out old videos on open
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
-  const last = +readJSON('replay.autoFillAt', 0);
-  const gap = 24*3600e3 / Math.max(1, af.perDay);   // min time between auto-refreshes
-  if (Date.now() - last < gap) return;
-  writeJSON('replay.autoFillAt', Date.now());
+  const now = Date.now();
+  const newest = pool.reduce((m, v) => Math.max(m, v.ts || 0), 0); // most recently pooled video
+  if (newest && now - newest < FEED_STALE_MS) return;             // feed is still fresh
+  if (now - (+readJSON('replay.autoFillAt', 0)) < FEED_STALE_MS) return; // tried recently — wait
+  writeJSON('replay.autoFillAt', now);
   refreshFeedNow();
 }
-setInterval(maybeAutoFill, 30*60000); // also check ~every 30 min while the app stays open
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
 async function autoSyncChannels() {
   const chans = allTrackedChannels();
   if (!chans.length || !secrets.apiKey) return;
-  setLed('checking');
   const results = await Promise.allSettled(chans.map(async c => {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${uploadsPlaylist(c.id)}&key=${secrets.apiKey}`;
     const d = await (await fetch(url)).json();
@@ -1697,7 +1710,7 @@ async function autoSyncChannels() {
   const ids = [];
   results.forEach(r => { if (r.status === 'fulfilled') ids.push(...r.value); });
   if (ids.length) { const added = addToPool(await fetchVideos(Array.from(new Set(ids)))); if (currentTab==='search') showFeed(); if (added) toast(`Auto-filled ${added} new video${added>1?'s':''} from your channels.`); }
-  saveData(); saveTracked(); ledNew = []; renderLed();
+  saveData(); saveTracked();
 }
 
 function renderChannels() {
@@ -1715,7 +1728,9 @@ function renderChannels() {
 
 /* ============================== TABS ============================== */
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { exitChannel(); setTab(t.dataset.tab); pushNav(); });
-$('refreshBtn').onclick = () => { currentTab='search'; setTab('search'); findMore('date'); }; // ⟳ = newest uploads
+// The RePlay logo IS the home/feed button (there's no more Search tab).
+$('logo').onclick = () => { exitChannel(); activeFilters = []; setTab('search'); loadHome(); pushNav(); };
+$('refreshBtn').onclick = () => { exitChannel(); activeFilters = []; setTab('search'); findMore('date'); }; // ⟳ = newest uploads
 
 function setTab(name){
   currentTab = name;
@@ -1775,6 +1790,8 @@ function renderTab() {
   document.querySelector('.subtab[data-sub="videos"]').textContent = `🖥 Horizontal (${videos.length})`;
   if (!hideShorts) document.querySelector('.subtab[data-sub="shorts"]').textContent = `📱 Vertical (${shorts.length})`;
   const shown = homeSub==='shorts' ? shorts : videos;
+  updateAutoBtn();
+  if (autoplayMode) { renderQueue(shown); return; }
   $('grid').className = 'grid' + (homeSub==='shorts' ? ' shortsgrid' : '');
   renderCards(shown);
   const extra = currentTab==='history' && data.savedSearches.length ? ` · ${data.savedSearches.length} recent searches` : '';
@@ -1803,16 +1820,98 @@ function buildVideoQueue(v) {
 function onVideoEnded() {
   if (!$('modal').classList.contains('open') || $('modal').classList.contains('shorts')) return;
   const i = videoIndex + 1;
-  if (i < videoQueue.length && !budgetLocked('videos')) { videoIndex = i; openPlayer(videoQueue[i], false, true); }
+  if (i < videoQueue.length && !budgetLocked('videos')) { videoIndex = i; if (autoPlaying) autoIndex = i; openPlayer(videoQueue[i], false, true); }
 }
-function playAll() {
-  let list;
-  if (channelView) list = channelVideos.filter(v => !isBlocked(v));
-  else if (currentTab === 'search') list = visibleList(lastResults, false).filter(v => !isBlocked(v));
-  else list = visibleList(({ history:data.history, later:data.watchLater, favorites:data.favorites, music:data.music }[currentTab] || []), false);
-  list = (list||[]).filter(v => homeSub==='shorts' ? isVert(v) : !isVert(v));
-  if (!list.length) { toast('Nothing to play here.'); return; }
-  play(list[0]);
+
+/* ============================== AUTOPLAY QUEUE ============================== */
+// Autoplay turns the current sub-tab list into a reorderable queue with a play/pause bar.
+let autoplayMode = false;     // reorder-list UI is showing instead of the card grid
+let autoOrder = [];           // user-ordered queue (video objects) for the current view
+let autoIndex = 0;            // resume position (last index played)
+let autoPlaying = false;      // a queue run is live (gates shorts auto-advance)
+let qDragFrom = -1;
+
+// Same *membership* (order-independent) — so a user reorder doesn't trigger a reseed.
+const sameIds = (a, b) => { if (a.length !== b.length) return false; const s = new Set(b.map(v => v.id)); return a.every(v => s.has(v.id)); };
+function updateAutoBtn() {
+  const b = $('playAllBtn'); if (!b) return;
+  b.textContent = autoplayMode ? '✖ Autoplay' : '🎬 Autoplay';
+  b.classList.toggle('on', autoplayMode);
+}
+function toggleAutoplay() {
+  autoplayMode = !autoplayMode;
+  if (!autoplayMode) autoPlaying = false;
+  updateAutoBtn();
+  refreshCurrent(); // re-render → queue list or normal grid
+}
+// Seed/refresh autoOrder from the list the current view is showing (keep custom order if unchanged).
+function seedAutoOrder(shown) {
+  if (!sameIds(autoOrder, shown)) { autoOrder = shown.slice(); autoIndex = Math.min(autoIndex, Math.max(0, autoOrder.length-1)); }
+}
+function renderQueue(shown) {
+  seedAutoOrder(shown);
+  const grid = $('grid'); grid.className = 'grid queue'; grid.innerHTML = '';
+  // play/pause bar
+  const bar = document.createElement('div'); bar.className = 'autobar';
+  bar.innerHTML = `<button class="ab-play primary">▶ Play</button>
+    <span class="ab-info"></span><button class="ab-clear">Reset order</button>`;
+  bar.querySelector('.ab-play').onclick = autoTogglePlay;
+  bar.querySelector('.ab-clear').onclick = () => { autoOrder = shown.slice(); autoIndex = 0; refreshCurrent(); };
+  grid.appendChild(bar);
+  refreshAutoInfo(bar);
+  if (!autoOrder.length) { $('empty').textContent = 'Nothing to queue here yet.'; return; }
+  $('empty').textContent = '';
+  autoOrder.forEach((v, i) => grid.appendChild(queueRow(v, i)));
+  flash(`<b>${autoOrder.length}</b> in your autoplay queue — drag or use ▲▼ to reorder, then ▶ Play`, true);
+}
+function refreshAutoInfo(bar) {
+  bar = bar || $('grid').querySelector('.autobar'); if (!bar) return;
+  const info = bar.querySelector('.ab-info');
+  if (info) info.textContent = `${autoOrder.length} videos${autoIndex>0?` · resume from #${autoIndex+1}`:''}`;
+  const pb = bar.querySelector('.ab-play');
+  if (pb) pb.textContent = (autoPlaying && $('modal').classList.contains('open') && !vidPaused && !shortPaused) ? '⏸ Pause' : '▶ Play';
+}
+function queueRow(v, i) {
+  const row = document.createElement('div'); row.className = 'qrow' + (autoPlaying && i===autoIndex ? ' playing' : '');
+  row.draggable = true;
+  row.innerHTML = `
+    <span class="qhandle" title="Drag to reorder">⠿</span>
+    <span class="qnum">${i+1}</span>
+    <img class="qthumb" loading="lazy" src="${v.thumb}" alt="">
+    <div class="qtitle">${escapeHtml(decodeEntities(v.title))}</div>
+    <div class="qmove"><button class="qup" title="Move up">▲</button><button class="qdown" title="Move down">▼</button></div>`;
+  const playFrom = () => { autoIndex = i; autoStart(); };
+  row.querySelector('.qthumb').onclick = playFrom;
+  row.querySelector('.qtitle').onclick = playFrom;
+  row.querySelector('.qup').onclick = (e) => { e.stopPropagation(); moveQueue(i, i-1); };
+  row.querySelector('.qdown').onclick = (e) => { e.stopPropagation(); moveQueue(i, i+1); };
+  row.addEventListener('dragstart', () => { qDragFrom = i; row.classList.add('dragover'); });
+  row.addEventListener('dragend', () => { qDragFrom = -1; row.classList.remove('dragover'); });
+  row.addEventListener('dragover', (e) => { e.preventDefault(); });
+  row.addEventListener('drop', (e) => { e.preventDefault(); if (qDragFrom >= 0 && qDragFrom !== i) moveQueue(qDragFrom, i); });
+  return row;
+}
+function moveQueue(from, to) {
+  qDragFrom = -1;
+  if (to < 0 || to >= autoOrder.length || from === to) return;
+  const [it] = autoOrder.splice(from, 1); autoOrder.splice(to, 0, it);
+  refreshCurrent();
+}
+// Begin (or resume) the run from autoIndex, picking the right player for the current sub-tab.
+function autoStart() {
+  if (!autoOrder.length) { toast('Nothing to queue here.'); return; }
+  autoIndex = Math.min(Math.max(0, autoIndex), autoOrder.length-1);
+  const v = autoOrder[autoIndex];
+  autoPlaying = true;
+  if (homeSub === 'shorts' || isVert(v)) { shortsQueue = autoOrder.slice(); shortsIndex = autoIndex; }
+  else { videoQueue = autoOrder.slice(); videoIndex = autoIndex; }
+  openPlayer(v, false);
+}
+// The bar's play/pause: pause/resume the open player, else start/resume the run.
+function autoTogglePlay() {
+  if ($('modal').classList.contains('open') && autoPlaying) { mediaPlayPause(); }
+  else autoStart();
+  refreshAutoInfo();
 }
 let shortPaused = false;
 function buildShortsQueue(v) {
@@ -1824,7 +1923,6 @@ function buildShortsQueue(v) {
 }
 // Fill the player meta (channel, description, related, action buttons) for a video.
 function fillMeta(v) {
-  $('pOpen').href = `https://www.youtube.com/watch?v=${v.id}`;
   $('ptitle').textContent = v.title;
   const chLink = v.channelId ? `<a href="#" class="chlink${isFollowed(v.channelId)?' followed':''}">${escapeHtml(v.channel||'')} →</a>` : escapeHtml(v.channel||'');
   $('pchannel').innerHTML = chLink + (v.publishedAt ? ` · ${escapeHtml(timeAgo(v.publishedAt))}` : '');
@@ -1851,7 +1949,9 @@ function svFill(slide, v, withIframe) {
   slide.style.backgroundImage = v ? `url(${v.thumb})` : '';
   if (v && withIframe) { // only the CURRENT slide gets a live player (neighbours stay thumbnails → smooth)
     const ifr = svIframe(v, true);
-    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .2s'; ifr.onload = () => { ifr.style.opacity = '1'; };
+    ifr.style.opacity = '0'; ifr.style.transition = 'opacity .2s';
+    // Handshake so the player posts state events → we can auto-advance when a short ends.
+    ifr.onload = () => { ifr.style.opacity = '1'; try { ifr.contentWindow.postMessage(JSON.stringify({event:'listening', id:'replay', channel:'widget'}), '*'); } catch {} };
     slide.appendChild(ifr);
   }
 }
@@ -1898,6 +1998,7 @@ function svGo(dir) {
     svFill(svSlides[2], shortsQueue[shortsIndex+1], false);
     shortPaused = false;
     const v = shortsQueue[shortsIndex];
+    if (autoPlaying) autoIndex = shortsIndex; // keep the resume marker in sync
     playing = v; budgetRecord('shorts'); addHistory(v); renderBudgets(); fillMeta(v); history.replaceState(navSnapshot(), '');
     svAnimating = false;
   };
@@ -1980,14 +2081,22 @@ function syncPlayerButtons() {
   const fol = playing.channelId && isFollowed(playing.channelId);
   $('pFollow').classList.toggle('on',fol); $('pFollow').textContent = fol ? '👍 Following' : '👍 Follow channel';
   const cl = $('pchannel').querySelector('.chlink'); if (cl) cl.classList.toggle('followed', !!fol);
+  const inMusic = data.music.some(x=>x.id===playing.id);
+  $('pMusic').classList.toggle('on', inMusic); $('pMusic').title = inMusic ? 'In Music — click to remove' : 'Mark as Music';
+  // Re-arm the orient button for the current video (sets icon, horiz state, countdown + flip).
+  const ob = $('pOrient'); ob.classList.remove('counting'); ob.classList.toggle('horiz', !isVert(playing));
+  ob.title = isVert(playing) ? 'Vertical — click to switch to Horizontal' : 'Horizontal — click to switch to Vertical';
+  ob.innerHTML = orientInner();
+  wireOrient(ob, playing, syncPlayerButtons);
 }
 $('pLater').onclick = () => { toggleList('watchLater', playing); syncPlayerButtons(); };
 $('pFav').onclick = () => { toggleList('favorites', playing); syncPlayerButtons(); };
+$('pMusic').onclick = () => { if(!playing) return; toggleList('music', playing); syncPlayerButtons(); };
 $('pFollow').onclick = () => { if(!playing) return; if (playing.channelId && isFollowed(playing.channelId)) unfollowChannel(playing.channelId); else followChannel(playing); syncPlayerButtons(); };
 $('pHideCh').onclick = () => { if(!playing) return; hideChannel(playing); history.back(); };
 $('pHideVid').onclick = () => { if(!playing) return; hideVideo(playing); history.back(); };
 $('descToggle').onclick = () => { const collapsed = $('pdesc').classList.toggle('collapsed'); $('descToggle').textContent = collapsed ? 'Show more' : 'Show less'; };
-function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-open'); const i=$('iframe'); if(i) i.remove(); destroyCarousel(); }
+function closePlayerUI(){ $('modal').classList.remove('open','shorts','sheet-open'); const i=$('iframe'); if(i) i.remove(); destroyCarousel(); autoPlaying = false; if (autoplayMode) refreshAutoInfo(); }
 $('closeModal').onclick = () => history.back();
 $('modal').addEventListener('click', e => { if (e.target===$('modal')) history.back(); });
 $('shortMore').onclick = (e) => { e.stopPropagation(); $('modal').classList.toggle('sheet-open'); };
@@ -2056,9 +2165,15 @@ window.addEventListener('message', e => {
   if (typeof e.data !== 'string' || !/youtube/.test(e.origin)) return;
   let d; try { d = JSON.parse(e.data); } catch { return; }
   const state = d.event==='onStateChange' ? d.info : (d.event==='infoDelivery' && d.info && typeof d.info.playerState==='number' ? d.info.playerState : null);
-  if (state === 0) onVideoEnded(); // 0 = ended
+  if (state !== 0) return; // 0 = ended
+  if ($('modal').classList.contains('shorts')) {
+    // During an autoplay run, a finished short scrolls to and plays the next one.
+    if (autoPlaying && shortsIndex + 1 < shortsQueue.length) svGo(1);
+  } else {
+    onVideoEnded();
+  }
 });
-$('playAllBtn').onclick = playAll;
+$('playAllBtn').onclick = toggleAutoplay;
 
 /* ============================== GITHUB SYNC ============================== */
 const GIST_FILE = 'replay-data.json';
@@ -2180,7 +2295,7 @@ async function forcePush() {
 function softRefresh() {
   pool = data.pool || []; tracked = data.tracked || []; // re-link after a merge
   renderPoolStat();
-  renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderBudgets(); renderBudgetPrefs();
+  renderDislikes(); renderTopics(); renderChannels(); renderBudgets(); renderBudgetPrefs();
   $('hideShorts').checked = data.prefs.hideShorts;
   $('verticalMaxSec').value = data.prefs.verticalMaxSec || 60;
   renderLangs(); renderPoolCount();
@@ -2232,7 +2347,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v61'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v63'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2270,9 +2385,8 @@ $('importFile').onchange = async (e) => {
 };
 
 /* ============================== INIT ============================== */
-function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderPoolStat(); renderDislikes(); renderTopics(); renderChannels(); renderLed(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
-$('led').onclick = fetchChannelNew;
-$('checkChannelsBtn').onclick = () => { checkChannels(); toast('Checking your channels…'); };
+function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderPoolStat(); renderDislikes(); renderTopics(); renderChannels(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
+$('checkChannelsBtn').onclick = async () => { toast('Checking your channels…'); await autoSyncChannels(); };
 $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
 
 // Share Target: when a YouTube link is shared TO RePlay (e.g. from WhatsApp/YouTube on Android),
@@ -2311,11 +2425,7 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  if (secrets.apiKey && data.followed.length) { // light the LED on startup, throttled (you may have many subs)
-    const last = +readJSON('replay.ledAt', 0);
-    if (Date.now() - last > 6*3600e3) { writeJSON('replay.ledAt', Date.now()); checkChannels(); } else renderLed();
-  }
-  maybeAutoFill(); // throttled channel refresh on open
+  maybeAutoFill(); // refresh the feed on open if it's gone stale (>2h) — see maybeAutoFill
 })();
 </script>
 </body>
