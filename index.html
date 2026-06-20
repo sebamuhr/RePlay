@@ -1704,7 +1704,15 @@ async function refreshFeedNow(force, announce) {
   } finally { _refreshing = false; }
   if (announce) {
     if (err) toast(apiErr(err)); // usually "daily quota reached" — now you can SEE it
-    else toast(added ? `🔄 Added ${added} newer video${added>1?'s':''}.` : '🔄 Checked — no newer videos yet.');
+    else if (added) toast(`🔄 Added ${added} newer video${added>1?'s':''}.`);
+    else {
+      // Ran fine but added nothing — say WHY: no sources configured, or sources genuinely have nothing newer.
+      const hasCh = allTrackedChannels().length;
+      const hasTopics = (data.prefs.topics||[]).filter(Boolean).length && (+data.prefs.feedTopicPages > 0);
+      toast(!hasCh && !hasTopics
+        ? '🔄 Nothing to refresh from — follow channels or add 👍 topics in ⚙.'
+        : `🔄 Checked ${hasCh} channel${hasCh!==1?'s':''}${hasTopics?' + topics':''} — no newer videos right now.`);
+    }
   }
   return added;
 }
@@ -1718,18 +1726,21 @@ function feedTopTs(shown) {
   const watched = new Set(data.history.map(h => h.id));
   return pool.reduce((m, v) => (!watched.has(v.id) && v.publishedAt) ? Math.max(m, Date.parse(v.publishedAt) || 0) : m, 0);
 }
-// Called on open AND whenever the home feed re-renders. Refetches when the TOP video you can see is
-// older than 1h — but only if we haven't already tried within the last 1h (so a fetch that turns up
-// nothing waits another 1h instead of retrying on every render). Pass the shown list so we measure
-// what's actually on screen, not the whole pool (a recent Short on the other tab must NOT count).
-function maybeAutoFill(shown) {
+// Called on open (force=true) AND whenever the home feed re-renders (force=false). Refetches when the
+// TOP video you can see is older than 1h. Pass the shown list so we measure what's actually on screen,
+// not the whole pool (a recent Short on the other tab must NOT count).
+//   force=false (browsing): throttle to once an hour so re-renders don't spam the API.
+//   force=true  (you opened the app): a deliberate action → only a 5-min floor, so reopening the app
+//               always pulls fresh content, but rapid reopens still can't burn quota.
+function maybeAutoFill(shown, force) {
   prunePool();
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
   const now = Date.now();
   const top = feedTopTs(shown);                                   // age of the top video on screen
   if (top && now - top < FEED_STALE_MS) return;                  // top video < 1h old → still fresh
-  if (now - (+readJSON('replay.autoFillAt', 0)) < FEED_STALE_MS) return; // tried recently — wait
+  const floor = force ? 5*60e3 : FEED_STALE_MS;                  // open=5min, browsing=1h
+  if (now - (+readJSON('replay.autoFillAt', 0)) < floor) return; // tried recently — wait
   writeJSON('replay.autoFillAt', now);
   toast('🔄 Checking for newer videos…');
   refreshFeedNow(false, true); // announce the result so you can tell it actually ran
@@ -2394,7 +2405,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v69'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v70'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2472,7 +2483,7 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  maybeAutoFill(); // refresh the feed on open if it's gone stale (>1h) — see maybeAutoFill
+  maybeAutoFill(null, true); // you just opened the app → force a refresh if the top video is >1h old
 })();
 </script>
 </body>
