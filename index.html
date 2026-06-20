@@ -1260,8 +1260,8 @@ function rerenderFilter() {
      (channelView ? 'No videos found for this channel.' :
       (activeFilters.length ? (secrets.apiKey ? 'No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.' : 'Add your free YouTube API key in ⚙ to search.') :
        (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
-  // Auto-refresh if top video is older than 1h and user is browsing the plain home feed
-  if (!channelView && !activeFilters.length) maybeAutoFill();
+  // Auto-refresh if the TOP video on screen is older than 1h and we're on the plain home feed
+  if (!channelView && !activeFilters.length) maybeAutoFill(shown);
 }
 
 /* ---- Channels sub-tab: search for channels (or show your followed ones) ---- */
@@ -1710,18 +1710,25 @@ async function refreshFeedNow(force, announce) {
 }
 // How stale the feed may get before we refetch. Also the cool-off after a fetch that found nothing.
 const FEED_STALE_MS = 1*3600e3; // 1 hour
-// Called on open AND whenever the home feed re-renders. Refetches when the newest published video
-// in the pool is older than 1h — but only if we haven't already tried within the last 1h (so a
-// fetch that turns up nothing waits another 1h instead of retrying on every render).
-function maybeAutoFill() {
+// Newest publish time among the videos ACTUALLY SHOWN in the feed (the list is sorted newest-first,
+// so shown[0] is literally "the top video"). Falls back to the freshest unwatched pool video when
+// no list is passed (e.g. on app open, before the feed has rendered).
+function feedTopTs(shown) {
+  if (shown && shown.length) return Date.parse(shown[0].publishedAt) || 0;
+  const watched = new Set(data.history.map(h => h.id));
+  return pool.reduce((m, v) => (!watched.has(v.id) && v.publishedAt) ? Math.max(m, Date.parse(v.publishedAt) || 0) : m, 0);
+}
+// Called on open AND whenever the home feed re-renders. Refetches when the TOP video you can see is
+// older than 1h — but only if we haven't already tried within the last 1h (so a fetch that turns up
+// nothing waits another 1h instead of retrying on every render). Pass the shown list so we measure
+// what's actually on screen, not the whole pool (a recent Short on the other tab must NOT count).
+function maybeAutoFill(shown) {
   prunePool();
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
   const now = Date.now();
-  // Use publishedAt (when the video was published on YouTube) so we're asking "how old is the
-  // newest content in the feed?" rather than "how long since we last fetched?"
-  const newest = pool.reduce((m, v) => Math.max(m, v.publishedAt ? Date.parse(v.publishedAt) : 0), 0);
-  if (newest && now - newest < FEED_STALE_MS) return;             // feed is still fresh
+  const top = feedTopTs(shown);                                   // age of the top video on screen
+  if (top && now - top < FEED_STALE_MS) return;                  // top video < 1h old → still fresh
   if (now - (+readJSON('replay.autoFillAt', 0)) < FEED_STALE_MS) return; // tried recently — wait
   writeJSON('replay.autoFillAt', now);
   toast('🔄 Checking for newer videos…');
@@ -2387,7 +2394,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v68'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v69'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
