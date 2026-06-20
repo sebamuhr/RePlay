@@ -1260,8 +1260,6 @@ function rerenderFilter() {
      (channelView ? 'No videos found for this channel.' :
       (activeFilters.length ? (secrets.apiKey ? 'No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.' : 'Add your free YouTube API key in ⚙ to search.') :
        (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
-  // Auto-refresh if the TOP video on screen is older than 1h and we're on the plain home feed
-  if (!channelView && !activeFilters.length) maybeAutoFill(shown);
 }
 
 /* ---- Channels sub-tab: search for channels (or show your followed ones) ---- */
@@ -1716,32 +1714,35 @@ async function refreshFeedNow(force, announce) {
   }
   return added;
 }
-// How stale the feed may get before we refetch. Also the cool-off after a fetch that found nothing.
+// The feed is "fresh" while the newest video you can see is under 1h old.
 const FEED_STALE_MS = 1*3600e3; // 1 hour
-// Newest publish time among the videos ACTUALLY SHOWN in the feed (the list is sorted newest-first,
-// so shown[0] is literally "the top video"). Falls back to the freshest unwatched pool video when
-// no list is passed (e.g. on app open, before the feed has rendered).
-function feedTopTs(shown) {
-  if (shown && shown.length) return Date.parse(shown[0].publishedAt) || 0;
+
+// Age (publish time) of the newest unwatched video on the sub-tab you're currently looking at —
+// i.e. "the first video you see". Horizontal tab looks at horizontal videos, Vertical at verticals,
+// so a recent Short can never make a stale Horizontal feed look fresh (or vice-versa).
+function visibleTopTs() {
   const watched = new Set(data.history.map(h => h.id));
-  return pool.reduce((m, v) => (!watched.has(v.id) && v.publishedAt) ? Math.max(m, Date.parse(v.publishedAt) || 0) : m, 0);
+  const wantVert = (currentTab === 'search' && homeSub === 'shorts');
+  return pool.reduce((m, v) => {
+    if (watched.has(v.id) || !v.publishedAt || isBlocked(v) || isVert(v) !== wantVert) return m;
+    return Math.max(m, Date.parse(v.publishedAt) || 0);
+  }, 0);
 }
-// Called on open (force=true) AND whenever the home feed re-renders (force=false). Refetches when the
-// TOP video you can see is older than 1h. Pass the shown list so we measure what's actually on screen,
-// not the whole pool (a recent Short on the other tab must NOT count).
-//   force=false (browsing): throttle to once an hour so re-renders don't spam the API.
-//   force=true  (you opened the app): a deliberate action → only a 5-min floor, so reopening the app
-//               always pulls fresh content, but rapid reopens still can't burn quota.
-function maybeAutoFill(shown, force) {
-  prunePool();
+
+// THE refresh rule, exactly as asked: it runs ONLY when you open/return to the app (never in the
+// background), and ONLY fetches if the top video you see is more than 1h old. No separate fetch
+// cool-off — the top video's own age is the gate. A 30s in-memory debounce just stops the cold-open
+// and the visibility event from double-firing the same open; it resets every page load.
+let _lastOpenFill = 0;
+function autoFillOnOpen() {
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
-  const now = Date.now();
-  const top = feedTopTs(shown);                                   // age of the top video on screen
-  if (top && now - top < FEED_STALE_MS) return;                  // top video < 1h old → still fresh
-  const floor = force ? 5*60e3 : FEED_STALE_MS;                  // open=5min, browsing=1h
-  if (now - (+readJSON('replay.autoFillAt', 0)) < floor) return; // tried recently — wait
-  writeJSON('replay.autoFillAt', now);
+  if (document.hidden) return;                       // app isn't actually on screen
+  if (Date.now() - _lastOpenFill < 30e3) return;     // de-dupe the open's own double events
+  prunePool();
+  const top = visibleTopTs();
+  if (top && Date.now() - top < FEED_STALE_MS) return; // top video < 1h old → already fresh, leave it
+  _lastOpenFill = Date.now();
   toast('🔄 Checking for newer videos…');
   refreshFeedNow(false, true); // announce the result so you can tell it actually ran
 }
@@ -2405,7 +2406,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v70'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v71'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2483,7 +2484,9 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  maybeAutoFill(null, true); // you just opened the app → force a refresh if the top video is >1h old
+  autoFillOnOpen(); // cold open → refresh if the top video is >1h old
+  // Returning to a backgrounded app counts as "opening" it → same check (never runs while hidden).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) autoFillOnOpen(); });
 })();
 </script>
 </body>
