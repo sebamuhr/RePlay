@@ -1254,12 +1254,12 @@ function rerenderFilter() {
     b.onclick = () => findMore();
     wrap.appendChild(b); $('grid').appendChild(wrap);
   }
-  flash(`<b>${shown.length}</b> ${homeSub===’shorts’?’vertical’:’horizontal’}${channelView?’ from this channel’:’ in your feed’}`, true);
-  $(‘empty’).textContent = shown.length ? ‘’ :
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'}${channelView?' from this channel':' in your feed'}`, true);
+  $('empty').textContent = shown.length ? '' :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
-     (channelView ? ‘No videos found for this channel.’ :
-      (activeFilters.length ? (secrets.apiKey ? ‘No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.’ : ‘Add your free YouTube API key in ⚙ to search.’) :
-       (pool.length ? ‘’ : ‘Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.’))));
+     (channelView ? 'No videos found for this channel.' :
+      (activeFilters.length ? (secrets.apiKey ? 'No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.' : 'Add your free YouTube API key in ⚙ to search.') :
+       (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
   // Auto-refresh if top video is older than 1h and user is browsing the plain home feed
   if (!channelView && !activeFilters.length) maybeAutoFill();
 }
@@ -2371,7 +2371,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v66'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v67'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
