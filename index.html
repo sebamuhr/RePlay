@@ -332,8 +332,8 @@
 
     <hr class="hr">
     <h3>Auto-fill feed <span style="color:var(--muted);font-weight:400">— keep your home feed fresh</span></h3>
-    <p>When you open RePlay and the newest video in your feed is more than <b>2 hours old</b>, RePlay pulls the <b>latest videos</b> for your <b>👍 liked topics</b> (a real YouTube search) plus new uploads from your <b>followed channels</b> into your feed (tap the <b>RePlay</b> logo). If nothing new turns up, it waits another 2 hours before trying again. This only happens when you open the app — never silently in the background. Videos are kept for the retention window below, then drop off.</p>
-    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my feed when I open RePlay (every 2 hours)</label>
+    <p>When the newest video in your feed is more than <b>1 hour old</b>, RePlay pulls the <b>latest videos</b> for your <b>👍 liked topics</b> (a real YouTube search) plus new uploads from your <b>followed channels</b> into your feed. This happens when you open the app and whenever you browse the home feed — never silently in the background. If nothing new turns up, it waits another hour before trying again. Videos are kept for the retention window below, then drop off.</p>
+    <label class="switch"><input type="checkbox" id="autoFill"> Auto-refresh my feed when new content is needed (at most once / hour)</label>
     <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Pages per topic</span><input class="num" id="feedTopicPages" type="number" min="0" max="5" value="2"><span class="lbl" style="min-width:auto">(0 = channels only; bigger = more videos, more quota)</span></div>
     <div class="row" style="margin-top:8px"><span class="lbl" style="min-width:auto">Keep videos for</span><input class="num" id="feedRetentionDays" type="number" min="1" max="60" value="7"><span class="lbl" style="min-width:auto">days</span></div>
     <div id="autoFillEst" style="color:var(--muted);font-size:12px;margin-top:4px"></div>
@@ -1254,12 +1254,14 @@ function rerenderFilter() {
     b.onclick = () => findMore();
     wrap.appendChild(b); $('grid').appendChild(wrap);
   }
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'}${channelView?' from this channel':' in your feed'}`, true);
-  $('empty').textContent = shown.length ? '' :
+  flash(`<b>${shown.length}</b> ${homeSub===’shorts’?’vertical’:’horizontal’}${channelView?’ from this channel’:’ in your feed’}`, true);
+  $(‘empty’).textContent = shown.length ? ‘’ :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
-     (channelView ? 'No videos found for this channel.' :
-      (activeFilters.length ? (secrets.apiKey ? 'No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.' : 'Add your free YouTube API key in ⚙ to search.') :
-       (pool.length ? '' : 'Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.'))));
+     (channelView ? ‘No videos found for this channel.’ :
+      (activeFilters.length ? (secrets.apiKey ? ‘No results (or YouTube’s daily quota is used up — it resets at midnight US-Pacific). Your search is correct; try again then.’ : ‘Add your free YouTube API key in ⚙ to search.’) :
+       (pool.length ? ‘’ : ‘Your feed is empty — type a topic and tap “🔍 Find more on YouTube” to fill it.’))));
+  // Auto-refresh if top video is older than 1h and user is browsing the plain home feed
+  if (!channelView && !activeFilters.length) maybeAutoFill();
 }
 
 /* ---- Channels sub-tab: search for channels (or show your followed ones) ---- */
@@ -1639,7 +1641,7 @@ $('importVidsBtn').onclick = () => $('importVidsFile').click();
 $('importVidsFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { await importVids(f); } catch { toast('Could not read that file.'); } e.target.value=''; };
 
 const uploadsPlaylist = id => 'UU' + id.slice(2);   // a channel's uploads playlist id
-/* ---- Auto-fill: refresh the feed on open when it's gone stale (>2h) ---- */
+/* ---- Auto-fill: refresh the feed when top video is stale (>1h) ---- */
 function renderAutoFill() {
   const af = data.prefs.autoFill || { enabled:true };
   $('autoFill').checked = !!af.enabled;
@@ -1650,7 +1652,7 @@ function renderAutoFill() {
   const pages = Math.max(0, +data.prefs.feedTopicPages || 0);
   const langs = (data.prefs.langs||[]).filter(Boolean).length || 1;
   const perRefresh = ch + topics * pages * langs * 100; // channels ~1 unit each; topic search ~100 units/page/lang
-  $('autoFillEst').textContent = `≈ ${perRefresh} units per refresh (at most once / 2h, only on open · ${ch} channels + ${topics} topics × ${pages} pages × ${langs} lang). Budget ~10,000/day.`;
+  $('autoFillEst').textContent = `≈ ${perRefresh} units per refresh (at most once / 1h · ${ch} channels + ${topics} topics × ${pages} pages × ${langs} lang). Budget ~10,000/day.`;
   const tl = $('trackedLabel'); if (tl) tl.textContent = `🤖 Auto-tracked (${tracked.length}, from your searches)`;
 }
 $('autoFill').onchange = () => { data.prefs.autoFill.enabled = $('autoFill').checked; touchPrefs(); renderAutoFill(); };
@@ -1697,16 +1699,18 @@ async function refreshFeedNow(force) {
   } finally { _refreshing = false; }
 }
 // How stale the feed may get before we refetch. Also the cool-off after a fetch that found nothing.
-const FEED_STALE_MS = 2*3600e3; // 2 hours
-// Runs ONLY when the app is opened (not on a background timer). Refetches when the newest pooled
-// video is older than 2h — but only if we haven't already tried within the last 2h (so a fetch
-// that turns up nothing waits another 2h instead of retrying on every open).
+const FEED_STALE_MS = 1*3600e3; // 1 hour
+// Called on open AND whenever the home feed re-renders. Refetches when the newest published video
+// in the pool is older than 1h — but only if we haven't already tried within the last 1h (so a
+// fetch that turns up nothing waits another 1h instead of retrying on every render).
 function maybeAutoFill() {
-  prunePool(); // always age-out old videos on open
+  prunePool();
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
   const now = Date.now();
-  const newest = pool.reduce((m, v) => Math.max(m, v.ts || 0), 0); // most recently pooled video
+  // Use publishedAt (when the video was published on YouTube) so we're asking "how old is the
+  // newest content in the feed?" rather than "how long since we last fetched?"
+  const newest = pool.reduce((m, v) => Math.max(m, v.publishedAt ? Date.parse(v.publishedAt) : 0), 0);
   if (newest && now - newest < FEED_STALE_MS) return;             // feed is still fresh
   if (now - (+readJSON('replay.autoFillAt', 0)) < FEED_STALE_MS) return; // tried recently — wait
   writeJSON('replay.autoFillAt', now);
@@ -2367,7 +2371,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v65'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v66'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2445,7 +2449,7 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  maybeAutoFill(); // refresh the feed on open if it's gone stale (>2h) — see maybeAutoFill
+  maybeAutoFill(); // refresh the feed on open if it's gone stale (>1h) — see maybeAutoFill
 })();
 </script>
 </body>
