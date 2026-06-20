@@ -1672,7 +1672,7 @@ async function bigTopicFetch() {
   const topics = (data.prefs.topics||[]).filter(Boolean);
   const pages = Math.max(0, +data.prefs.feedTopicPages || 0);
   if (!topics.length || !pages || !secrets.apiKey) return 0;
-  const allIds = [];
+  const allIds = []; let lastErr = null;
   for (const t of topics) {
     let tokens = null;
     for (let p = 0; p < pages; p++) {
@@ -1680,23 +1680,33 @@ async function bigTopicFetch() {
         const { ids, tokens: nt } = await searchPageMulti(t, tokens, 'date'); // 'date' = newest first
         allIds.push(...ids); tokens = nt;
         if (!Object.values(nt).some(Boolean)) break; // no further pages
-      } catch { break; } // quota/error → stop this topic, keep what we have
+      } catch (e) { lastErr = e; break; } // quota/error → stop this topic, keep what we have
     }
   }
-  if (!allIds.length) return 0;
+  if (!allIds.length) { if (lastErr) throw lastErr; return 0; } // nothing fetched AND it errored → surface why (quota)
   return addToPool(await fetchVideos(Array.from(new Set(allIds))));
 }
 // One refresh pass: cheap channel uploads + big topic fetch + prune.
+// announce=true → show the outcome (added N / nothing new / quota reached) so the hourly
+// auto-refresh is VISIBLE instead of failing silently.
 let _refreshing = false;
-async function refreshFeedNow(force) {
-  if (_refreshing) return; _refreshing = true;
+async function refreshFeedNow(force, announce) {
+  if (_refreshing) return 0; _refreshing = true;
+  let err = null, added = 0;
   try {
-    await autoSyncChannels().catch(()=>{});
-    const added = await bigTopicFetch().catch(()=>0);
+    try { added += (await autoSyncChannels(true)) || 0; } catch (e) { err = err || e; } // cheap: followed-channel uploads
+    try { added += (await bigTopicFetch()) || 0; }       catch (e) { err = err || e; } // pricier: liked-topic search
     prunePool();
-    if ((added || force) && currentTab==='search' && !activeFilters.length) showFeed();
+    // Always re-render the home view after a refresh — even if added===0, freshly-fetched videos
+    // (or a re-sort by publish date) need to paint. This was the bug: it only re-rendered when added>0.
+    if (currentTab==='search' && !activeFilters.length && !channelView) showFeed();
     renderPoolStat();
   } finally { _refreshing = false; }
+  if (announce) {
+    if (err) toast(apiErr(err)); // usually "daily quota reached" — now you can SEE it
+    else toast(added ? `🔄 Added ${added} newer video${added>1?'s':''}.` : '🔄 Checked — no newer videos yet.');
+  }
+  return added;
 }
 // How stale the feed may get before we refetch. Also the cool-off after a fetch that found nothing.
 const FEED_STALE_MS = 1*3600e3; // 1 hour
@@ -1714,13 +1724,15 @@ function maybeAutoFill() {
   if (newest && now - newest < FEED_STALE_MS) return;             // feed is still fresh
   if (now - (+readJSON('replay.autoFillAt', 0)) < FEED_STALE_MS) return; // tried recently — wait
   writeJSON('replay.autoFillAt', now);
-  refreshFeedNow();
+  toast('🔄 Checking for newer videos…');
+  refreshFeedNow(false, true); // announce the result so you can tell it actually ran
 }
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
-async function autoSyncChannels() {
+// Returns the number of new videos added. quiet=true suppresses its own toast (the caller reports).
+async function autoSyncChannels(quiet) {
   const chans = allTrackedChannels();
-  if (!chans.length || !secrets.apiKey) return;
+  if (!chans.length || !secrets.apiKey) return 0;
   const results = await Promise.allSettled(chans.map(async c => {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=5&playlistId=${uploadsPlaylist(c.id)}&key=${secrets.apiKey}`;
     const d = await (await fetch(url)).json();
@@ -1731,10 +1743,14 @@ async function autoSyncChannels() {
     if (vids[0]) c.lastVideoId = vids[0];
     return fresh;
   }));
+  // If EVERY channel failed (typically quota), don't fail silently — let the caller report it.
+  if (results.length && results.every(r => r.status === 'rejected')) { saveData(); saveTracked(); throw results[0].reason; }
   const ids = [];
   results.forEach(r => { if (r.status === 'fulfilled') ids.push(...r.value); });
-  if (ids.length) { const added = addToPool(await fetchVideos(Array.from(new Set(ids)))); if (currentTab==='search') showFeed(); if (added) toast(`Auto-filled ${added} new video${added>1?'s':''} from your channels.`); }
+  let added = 0;
+  if (ids.length) { added = addToPool(await fetchVideos(Array.from(new Set(ids)))); if (currentTab==='search') showFeed(); if (added && !quiet) toast(`Auto-filled ${added} new video${added>1?'s':''} from your channels.`); }
   saveData(); saveTracked();
+  return added;
 }
 
 function renderChannels() {
@@ -2371,7 +2387,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v67'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v68'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2410,7 +2426,7 @@ $('importFile').onchange = async (e) => {
 
 /* ============================== INIT ============================== */
 function refreshAll(){ pool = data.pool || []; tracked = data.tracked || []; renderPoolStat(); renderDislikes(); renderTopics(); renderChannels(); renderAutoFill(); renderSuggestions(); renderBudgets(); renderBudgetPrefs(); $('hideShorts').checked=data.prefs.hideShorts; setTab(currentTab); }
-$('checkChannelsBtn').onclick = async () => { toast('Checking your channels…'); await autoSyncChannels(); };
+$('checkChannelsBtn').onclick = async () => { toast('Checking your channels…'); try { const n = await autoSyncChannels(); toast(n ? `Added ${n} new video${n>1?'s':''} from your channels.` : 'No new uploads found.'); } catch (e) { toast(apiErr(e)); } };
 $('clearTrackedBtn').onclick = () => { tracked = []; saveTracked(); renderAutoFill(); toast('Cleared auto-tracked channels.'); };
 
 // Share Target: when a YouTube link is shared TO RePlay (e.g. from WhatsApp/YouTube on Android),
