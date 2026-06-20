@@ -1,48 +1,70 @@
 # RePlay
 
-A calm, **search-only** YouTube viewer. No algorithmic "maybe you like it" feed, no comments, no likes, no rabbit holes — just the videos you actually searched for, the channels you actually follow, with a **search that obeys you** and **watch budgets** so you don't lose your afternoon.
+A calm YouTube feed manager. No algorithmic "maybe you like it" junk — just the channels you follow, the topics you like, and a **smart local pool** that refreshes itself so fresh videos are always ready when you open it.
 
 It's a single static page (a PWA) — open it in any browser, install it to your home screen, done. No server, no real login.
 
 ## What it does
 
-### Search & feed
-- **Search-only feed** — search a topic, see those videos. Nothing is pushed at you.
-- **Loose, ranked search** — type a few words and you get matches even if they're not exact. A video is a hit if it contains **any** of your words (across title, description and channel), and results are ordered by how many words matched, newest first. Punctuation, accents and apostrophes don't get in the way (`pokemon` finds `Pokémon`, `dont` finds `Don't`).
-- **Big local pool** — up to **5,000** videos are cached on-device, so your feed and searches are instant and free (no API call). The feed paints in batches with a **Show more** button so it stays smooth.
-- **Find more on YouTube** — when your local pool runs dry, one tap fetches fresh results and adds them to the pool.
+### Feed & auto-refresh
+- **Personal feed** — your followed channels + liked topics are the source; nothing is pushed at you by an algorithm.
+- **Big local pool** — up to **5,000** videos are cached on-device, so your feed and searches are instant and free (no API call). The feed paints in batches with a **Show more** button.
+- **Auto-refresh on open** — when you open the app, RePlay checks whether the newest pooled video is older than 2 hours. If so, it fetches fresh content automatically (and only once per 2 hours, not on every open). No background polling.
+- **Search inside the pool** — type a few words and get ranked matches across title, description and channel. `pokemon` finds `Pokémon`, `dont` finds `Don't`. When the pool runs dry a **Find more on YouTube** button fetches live results and adds them.
+- **Clear & re-fetch** — Settings has a 🔄 button to wipe the pool and fetch everything fresh from scratch.
 
 ### Tabs
-- **Search** — your local feed / search results.
-- **History · Watch Later · Favorites** — auto-saved lists. Later and Fav on every card.
-- **Channels** — see the channels you follow, or search for channels. Your own followed/auto-tracked channels always show **first**; YouTube results come after. **Fetch new channels** at the bottom pages through more results. Tap a channel to open it and browse its uploads.
-- **Music** — everything you've tagged as music (see below), in its own place.
+- **Home (RePlay logo)** — your feed / search. Tap the **RePlay** header logo to return here from anywhere and clear active filters.
+- **History · Watch Later · Favorites** — auto-saved lists. Later and Fav are on every card.
+- **Channels** — channels you follow, with search. Your followed/auto-tracked channels show first; YouTube results come after. Tap a channel to browse its uploads.
+- **Music** — everything you've tagged as music, in its own place.
+
+### Sub-tabs (Horizontal / Vertical / Channels)
+On Home and the library tabs, the content is split into three sub-tabs:
+
+- **Horizontal** — standard/landscape videos.
+- **Vertical** — Shorts and portrait clips.
+- **Channels** — on Home with no search active, shows **suggested channels you don't yet follow** (built from your pool and auto-tracked list). Tap 👍 Follow to add them to your feed. A **🔄 Discover more channels** button fetches additional suggestions from YouTube based on your liked topics.
+
+### Orientation detection
+RePlay uses the **YouTube player embed ratio** to determine whether a video is horizontal or vertical — this is accurate for any video, not just Shorts. Old cached videos fall back to duration (configurable cutoff in Settings). You can always override any video manually with the phone button.
 
 ### Per-video buttons (on every card)
 - **Later / Fav** — add to Watch Later / Favorites.
-- **Horizontal / Vertical** — fix a video's orientation by hand. The button is a phone: **upright = vertical**, **rotated = horizontal**. Tapping starts a **3·2·1 countdown** before it moves the video to the matching sub-tab — tap again during the countdown to cancel (so a mis-tap costs nothing). Your choice overrides the duration guess everywhere and **syncs across devices**.
-- **Music** — tag/untag a video as music; it appears in the **Music** tab. (A video can be Music *and* a Favorite, etc.)
-- **Not interested / Remove** — hide a video, or remove it from a list.
-
-### Sub-tabs (Horizontal / Vertical / Channels)
-- **Horizontal** and **Vertical** split your feed by orientation. The cutoff is duration-based (configurable in Settings) but you can override any video with the phone button above.
-- **Channels** sub-tab (on Search) lets you search channels right from the feed.
-
-### Blackout mode (small screens)
-- A **blackout** button (a moon icon) appears inside the player. Start a video, tap it, and the screen goes **fully black** while audio keeps playing.
-- On Android it goes **fullscreen/immersive** (hides the notification bar and browser chrome) and requests a **wake lock** so the phone won't auto-lock and pause — a "screen off" feel without a real lock. Perfect for pocketing it.
-- Dim **previous / play-pause / next** controls in the center let you move through videos without leaving the dark; a small **close (x)** button in the corner closes it.
-- *Honest limit:* no web page can fully lock a phone — the OS still lets you swipe the notification shade or use hardware buttons. iOS keeps the black overlay but can't hide its notification bar (it only allows true fullscreen for video).
+- **Orientation toggle** — a phone+rotate icon. Tap to move a video between Horizontal and Vertical sub-tabs. Tapping starts a **3·2·1 countdown** before moving it — tap again to cancel. Your choice overrides the API detection everywhere.
+- **Music** — tag/untag a video as music; it appears in the **Music** tab.
+- **Not interested** — hide a video from the feed.
 
 ### Player
-- **Vertical (Shorts) player** — full-screen, swipe up/down to move between videos, with YouTube's native **controls/timebar** available.
-- **Horizontal player** — standard controls, autoplay-next through the current list, and **Play all**.
 
-### Filters, budgets, sync
-- **Like topics** to auto-fill your Home & feed; **Dislike any word, topic or name** to hide every video that mentions it (title, description, tags or channel) — accent/punctuation-insensitive.
-- **Watch budgets** — "watch X, then wait Y". Separate budgets for Vertical and regular videos; resets after Y of not watching.
-- **Follow / Hide channels** while watching. The LED dot lights up when a followed channel has new uploads (cheap: ~1 quota unit per channel). Import your YouTube subscriptions from a Takeout CSV.
-- **Sync across devices** via a private GitHub Gist (optional). Lists, pool, followed channels, orientation overrides and Music all merge across devices (with tombstones, so deletions stick).
+- **Vertical (Shorts) player** — full-screen, swipe up/down to move between videos.
+- **Horizontal player** — standard controls, with the video frame **pinned at the top** while title, description, and related videos scroll beneath it.
+- **Player action row** — Later, Fav, Orientation toggle, Music, Not interested, Hide channel, Follow channel, Close. All the same actions as the cards, right there in the player.
+
+### 🎬 Autoplay queue
+
+Tap **🎬 Autoplay** (above the grid on any sub-tab) to switch the current list into a reorderable queue:
+
+- **Drag** rows or use the **▲ / ▼** buttons to set your preferred order.
+- Press **▶ Play** to start playing from the top (or from where you left off if you've already started).
+- Videos auto-advance: when one ends, the next plays automatically.
+- **Shorts auto-advance** too — when a short ends during an autoplay run, RePlay scrolls to and plays the next one in the queue.
+- **Resume** — closing the player leaves your position intact. Press ▶ again and it picks up from where you stopped.
+- Tap **🎬 Autoplay** again to exit the queue and return to the normal grid.
+
+### Blackout mode (small screens)
+- A **moon icon** appears inside the player. Start a video, tap it, and the screen goes **fully black** while audio keeps playing.
+- On Android it goes **fullscreen/immersive** and requests a **wake lock** — a "screen off" feel without a real lock.
+- Dim play-pause / prev / next controls in the center; a small close button in the corner exits it.
+- *Honest limit:* no web page can fully lock a phone. iOS keeps the overlay but can't hide its notification bar.
+
+### Preferences & filters
+- **Languages** — choose which languages to include in your feed (multi-select in Settings).
+- **Like topics** to auto-fill your feed; **Dislike any word, topic or name** to hide every video that mentions it (title, description, tags or channel).
+- **Watch budgets** — "watch X videos, then wait Y". Separate budgets for Vertical and regular videos.
+- **Follow / Hide channels** — from any card or from the player while watching. Import your YouTube subscriptions from a Takeout CSV.
+- **Vertical cutoff** — configurable duration threshold for the duration-based orientation fallback.
+- **Sync across devices** via a private GitHub Gist (optional). Lists, pool, followed channels, orientation overrides and Music all merge across devices (with tombstones so deletions stick).
 - **Export / Import** a backup file (offline, no account).
 
 ## Setup (one time)
@@ -56,17 +78,16 @@ It's a single static page (a PWA) — open it in any browser, install it to your
    - On your other devices, paste the **same token + Gist ID** → Connect.
 
 ## Run it
-- **Locally:** just open `index.html` in your browser. (For the service worker / install prompt to work, serve it: `python3 -m http.server` then visit `http://localhost:8000`.)
+- **Locally:** serve it (YouTube blocks `file://`): `python3 -m http.server` then open `http://localhost:8000`.
 - **Hosted (recommended):** GitHub Pages — Settings → Pages → deploy from `master` / root. Then open `https://sebamuhr.github.io/RePlay/` and "Add to Home Screen".
 
 ### Updates not showing? (stuck service worker)
-RePlay is a PWA, so an old service worker can keep serving cached files. The app now force-revalidates and re-checks for new versions automatically, but to unstick a device once:
+RePlay is a PWA; an old service worker can serve cached files. To unstick a device:
 - Open `https://sebamuhr.github.io/RePlay/?fresh=1` once, then go back to the normal URL, **or**
 - Hard-reload (`Ctrl+Shift+R`), **or** (installed app) fully close and reopen it.
 
 ## Notes & honest caveats
-- The YouTube API has **no "is this a Short / orientation" flag**, so RePlay uses **duration** as a proxy (configurable cutoff, default **< 60s = Vertical**). A genuinely short normal clip may land on the Vertical side — fix it with the phone button.
-- To keep 5,000 videos light, stored descriptions are trimmed (~500 chars) and tags capped — enough for search, far smaller on disk. Everything lives in your browser's localStorage and (optionally) your Gist.
-- Ads on the embedded player are controlled by YouTube. A content blocker (e.g. uBlock Origin / Ghostery) in your browser handles them as usual.
-- Free API quota is 10,000 units/day. Each search ≈ 101 units, so ~99 searches/day — plenty for personal use. Browsing the local pool, following channels and checking for new uploads are cheap or free.
+- To keep 5,000 videos light, stored descriptions are trimmed (~500 chars) and tags are capped — enough for search, far smaller on disk. Everything lives in your browser's localStorage and (optionally) your Gist.
+- Ads on the embedded player are controlled by YouTube. A content blocker (e.g. uBlock Origin / Ghostery) handles them as usual.
+- Free API quota is 10,000 units/day. Each search ≈ 101 units, so ~99 searches/day — plenty for personal use. Browsing the local pool is free.
 - Your API key and GitHub token live **only in your browser** (localStorage), never in the synced Gist.
