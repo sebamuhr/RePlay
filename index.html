@@ -1729,20 +1729,26 @@ function visibleTopTs() {
   }, 0);
 }
 
-// THE refresh rule, exactly as asked: it runs ONLY when you open/return to the app (never in the
-// background), and ONLY fetches if the top video you see is more than 1h old. No separate fetch
-// cool-off — the top video's own age is the gate. A 30s in-memory debounce just stops the cold-open
-// and the visibility event from double-firing the same open; it resets every page load.
+// THE refresh rule, exactly as asked: it runs when you open/return to the app AND on a periodic
+// tick while the app stays open+visible (never in the background). It only fetches if the top
+// video you see is more than 1h old. Two gates keep "at most once / hour" honest:
+//   • _lastOpenFill (30s) — de-dupes the cold-open and the visibility event double-firing one open.
+//   • _lastFillAt   (1h)  — a hard floor between ACTUAL fetches, so the periodic tick can't hammer
+//                            the API when sources have nothing newer (top video stays old forever).
+// Both reset every page load, so a cold open always re-checks.
 let _lastOpenFill = 0;
-function autoFillOnOpen() {
+let _lastFillAt = 0;
+function autoFillOnOpen(periodic) {
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
-  if (document.hidden) return;                       // app isn't actually on screen
-  if (Date.now() - _lastOpenFill < 30e3) return;     // de-dupe the open's own double events
+  if (document.hidden) return;                          // app isn't actually on screen
+  if (!periodic && Date.now() - _lastOpenFill < 30e3) return; // de-dupe the open's own double events
   prunePool();
   const top = visibleTopTs();
-  if (top && Date.now() - top < FEED_STALE_MS) return; // top video < 1h old → already fresh, leave it
+  if (top && Date.now() - top < FEED_STALE_MS) return;  // top video < 1h old → already fresh, leave it
+  if (Date.now() - _lastFillAt < FEED_STALE_MS) return; // already fetched within the last hour → don't hammer
   _lastOpenFill = Date.now();
+  _lastFillAt = Date.now();
   toast('🔄 Checking for newer videos…');
   refreshFeedNow(false, true); // announce the result so you can tell it actually ran
 }
@@ -2406,7 +2412,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v71'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v72'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2487,6 +2493,10 @@ async function handleSharedLink() {
   autoFillOnOpen(); // cold open → refresh if the top video is >1h old
   // Returning to a backgrounded app counts as "opening" it → same check (never runs while hidden).
   document.addEventListener('visibilitychange', () => { if (!document.hidden) autoFillOnOpen(); });
+  // Stay-open case: re-check every 5 min while the app is visible. The 1h top-video/fetch gate means
+  // this fires a REAL fetch at most once per hour — it just guarantees an idle, never-touched window
+  // still refreshes instead of going stale forever.
+  setInterval(() => autoFillOnOpen(true), 5*60e3);
 })();
 </script>
 </body>
