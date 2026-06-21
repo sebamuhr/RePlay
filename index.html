@@ -467,6 +467,7 @@ function defaultData() {
     budgetState: { shorts:{count:0,lastWatch:0}, videos:{count:0,lastWatch:0} },
     deleted: { history:{}, watchLater:{}, favorites:{}, music:{} }, // tombstones for by-id lists
     orient: {},           // videoId -> { o:'vert'|'horiz', ts } — manual orientation override
+    lastFeedFetch: 0,     // when the home feed was last fetched — gates the hourly auto-refresh; synced
     updatedAt: 0,
   };
 }
@@ -1714,43 +1715,25 @@ async function refreshFeedNow(force, announce) {
   }
   return added;
 }
-// The feed is "fresh" while the newest video you can see is under 1h old.
+// The feed is "fresh" if it was last fetched under an hour ago.
 const FEED_STALE_MS = 1*3600e3; // 1 hour
 
-// Age (publish time) of the newest unwatched video on the sub-tab you're currently looking at —
-// i.e. "the first video you see". Horizontal tab looks at horizontal videos, Vertical at verticals,
-// so a recent Short can never make a stale Horizontal feed look fresh (or vice-versa).
-function visibleTopTs() {
-  const watched = new Set(data.history.map(h => h.id));
-  const wantVert = (currentTab === 'search' && homeSub === 'shorts');
-  return pool.reduce((m, v) => {
-    if (watched.has(v.id) || !v.publishedAt || isBlocked(v) || isVert(v) !== wantVert) return m;
-    return Math.max(m, Date.parse(v.publishedAt) || 0);
-  }, 0);
-}
-
-// THE refresh rule, exactly as asked: it runs when you open/return to the app AND on a periodic
-// tick while the app stays open+visible (never in the background). It only fetches if the top
-// video you see is more than 1h old. Two gates keep "at most once / hour" honest:
-//   • _lastOpenFill (30s) — de-dupes the cold-open and the visibility event double-firing one open.
-//   • _lastFillAt   (1h)  — a hard floor between ACTUAL fetches, so the periodic tick can't hammer
-//                            the API when sources have nothing newer (top video stays old forever).
-// Both reset every page load, so a cold open always re-checks.
-let _lastOpenFill = 0;
-let _lastFillAt = 0;
-function autoFillOnOpen(periodic) {
+// THE refresh rule, exactly as you asked: on every open/return — and on a periodic tick while the
+// app stays open+visible — look at WHEN the feed was last fetched; if that was over an hour ago,
+// fetch. data.lastFeedFetch is the single source of truth and it is:
+//   • PERSISTENT — saved to disk, so a reload can't reset it (the old in-memory flag could), and
+//   • SYNCED across devices — so your phone won't re-fetch right after your computer already did.
+//     It pulls the shared pool instead → both devices show the SAME videos AND quota isn't spent twice.
+// We stamp lastFeedFetch BEFORE the async fetch so a double-open (or a 2nd device) can't double-fire,
+// and refreshFeedNow announces the outcome so you can SEE it ran (added N / nothing new / quota).
+function autoFillOnOpen() {
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
-  if (document.hidden) return;                          // app isn't actually on screen
-  if (!periodic && Date.now() - _lastOpenFill < 30e3) return; // de-dupe the open's own double events
-  prunePool();
-  const top = visibleTopTs();
-  if (top && Date.now() - top < FEED_STALE_MS) return;  // top video < 1h old → already fresh, leave it
-  if (Date.now() - _lastFillAt < FEED_STALE_MS) return; // already fetched within the last hour → don't hammer
-  _lastOpenFill = Date.now();
-  _lastFillAt = Date.now();
+  if (document.hidden) return;                                       // app isn't actually on screen
+  if (Date.now() - (data.lastFeedFetch||0) < FEED_STALE_MS) return;  // fetched < 1h ago → already fresh
+  data.lastFeedFetch = Date.now(); saveData();                       // claim the slot now (persists + syncs)
   toast('🔄 Checking for newer videos…');
-  refreshFeedNow(false, true); // announce the result so you can tell it actually ran
+  refreshFeedNow(false, true);
 }
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
@@ -2313,6 +2296,8 @@ function mergeData(local, remote) {
   // pool & auto-tracked channels: merge so the feed is shared across devices
   m.pool = mergeById(local.pool, remote.pool).slice(0, POOL_MAX);
   m.tracked = mergeTracked(local.tracked, remote.tracked);
+  // newest fetch time wins → a device that just refreshed stops the other from re-fetching within the hour
+  m.lastFeedFetch = Math.max(local.lastFeedFetch||0, remote.lastFeedFetch||0);
   m.updatedAt = Math.max(local.updatedAt||0, remote.updatedAt||0);
   return m;
 }
@@ -2327,10 +2312,18 @@ async function pullSync() {
   if (file.truncated) { const r = await fetch(file.raw_url); if (!r.ok) throw new Error('Gist read failed (raw '+r.status+')'); content = await r.text(); }
   try { return JSON.parse(content); } catch { throw new Error('Gist content unreadable'); } // throw → never overwrite on a bad read
 }
-// Build a payload that's always small enough to read back reliably (drop the heavy pool if needed).
+// Build a payload that's small enough to read/write the Gist reliably. The pool is the heavy part —
+// but DON'T drop it (that was the bug: with the pool gone, every device kept its own feed, so phone
+// and computer showed different videos). Instead keep the pool's NEWEST videos that fit, so the part
+// of the feed you actually look at is shared across devices.
 function syncPayload() {
   let json = JSON.stringify(data);
-  if (json.length > 800000) { const clone = Object.assign({}, data); delete clone.pool; json = JSON.stringify(clone); }
+  if (json.length <= 800000) return json;
+  const clone = Object.assign({}, data);
+  const newest = (data.pool||[]).slice().sort((a,b) => (Date.parse(b.publishedAt)||0) - (Date.parse(a.publishedAt)||0));
+  let n = newest.length;
+  do { n = Math.floor(n * 0.7); clone.pool = newest.slice(0, n); json = JSON.stringify(clone); }
+  while (n > 0 && json.length > 800000); // shrink to newest-that-fits
   return json;
 }
 async function pushSync() {
@@ -2412,7 +2405,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v72'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v73'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2490,13 +2483,13 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  autoFillOnOpen(); // cold open → refresh if the top video is >1h old
+  autoFillOnOpen(); // cold open → refresh if the feed was last fetched >1h ago
   // Returning to a backgrounded app counts as "opening" it → same check (never runs while hidden).
   document.addEventListener('visibilitychange', () => { if (!document.hidden) autoFillOnOpen(); });
-  // Stay-open case: re-check every 5 min while the app is visible. The 1h top-video/fetch gate means
+  // Stay-open case: re-check every 5 min while the app is visible. The 1h lastFeedFetch gate means
   // this fires a REAL fetch at most once per hour — it just guarantees an idle, never-touched window
   // still refreshes instead of going stale forever.
-  setInterval(() => autoFillOnOpen(true), 5*60e3);
+  setInterval(autoFillOnOpen, 5*60e3);
 })();
 </script>
 </body>
