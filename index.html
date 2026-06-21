@@ -1255,7 +1255,8 @@ function rerenderFilter() {
     b.onclick = () => findMore();
     wrap.appendChild(b); $('grid').appendChild(wrap);
   }
-  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'}${channelView?' from this channel':' in your feed'}`, true);
+  const refreshedAgo = (!channelView && data.lastFeedFetch) ? ` · refreshed ${timeAgo(new Date(data.lastFeedFetch).toISOString())}` : '';
+  flash(`<b>${shown.length}</b> ${homeSub==='shorts'?'vertical':'horizontal'}${channelView?' from this channel':' in your feed'}${refreshedAgo}`, true);
   $('empty').textContent = shown.length ? '' :
     (lastResults.length ? `No ${homeSub} here — try the other sub-tab.` :
      (channelView ? 'No videos found for this channel.' :
@@ -1700,7 +1701,13 @@ async function refreshFeedNow(force, announce) {
     // (or a re-sort by publish date) need to paint. This was the bug: it only re-rendered when added>0.
     if (currentTab==='search' && !activeFilters.length && !channelView) showFeed();
     renderPoolStat();
-  } finally { _refreshing = false; }
+  } finally {
+    _refreshing = false;
+    // Stamp the time AFTER the pass completes (not before) so a fetch interrupted by the SW
+    // update-reload — which happens on every version bump — doesn't mark the feed "fresh" and
+    // block retries for an hour. saveData persists + syncs it so the other device won't re-fetch.
+    data.lastFeedFetch = Date.now(); saveData();
+  }
   if (announce) {
     if (err) toast(apiErr(err)); // usually "daily quota reached" — now you can SEE it
     else if (added) toast(`🔄 Added ${added} newer video${added>1?'s':''}.`);
@@ -1731,9 +1738,8 @@ function autoFillOnOpen() {
   if (!af || !af.enabled || !secrets.apiKey) return;
   if (document.hidden) return;                                       // app isn't actually on screen
   if (Date.now() - (data.lastFeedFetch||0) < FEED_STALE_MS) return;  // fetched < 1h ago → already fresh
-  data.lastFeedFetch = Date.now(); saveData();                       // claim the slot now (persists + syncs)
   toast('🔄 Checking for newer videos…');
-  refreshFeedNow(false, true);
+  refreshFeedNow(false, true); // refreshFeedNow stamps lastFeedFetch when the pass finishes
 }
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
@@ -1778,7 +1784,9 @@ function renderChannels() {
 document.querySelectorAll('.tab[data-tab]').forEach(t => t.onclick = () => { exitChannel(); setTab(t.dataset.tab); pushNav(); });
 // The RePlay logo IS the home/feed button (there's no more Search tab).
 $('logo').onclick = () => { exitChannel(); activeFilters = []; setTab('search'); loadHome(); pushNav(); };
-$('refreshBtn').onclick = () => { exitChannel(); activeFilters = []; setTab('search'); findMore('date'); }; // ⟳ = newest uploads
+// ⟳ = force a real feed refresh NOW (ignores the 1h gate) and report what happened — this is the
+// reliable manual trigger; the hourly auto-refresh uses the same refreshFeedNow under the hood.
+$('refreshBtn').onclick = () => { exitChannel(); activeFilters = []; setTab('search'); toast('🔄 Refreshing feed…'); refreshFeedNow(true, true); };
 
 function setTab(name){
   currentTab = name;
@@ -2341,7 +2349,8 @@ async function pushSync() {
 // Recovery: overwrite the Gist with THIS device's data (no pull). Use on the device that has your data.
 async function forcePush() {
   if (!secrets.ghToken || !secrets.gistId) { toast('Connect GitHub first.'); return; }
-  if (!confirm('Overwrite the Gist with THIS device’s data?\nUse this on the device that HAS your data (e.g. your computer).')) return;
+  // No confirm() here: in a standalone/installed PWA window confirm() can silently return false,
+  // which made this button look like it did nothing. The button label already says it overwrites.
   setSyncState('uploading…');
   try {
     const res = await fetch('https://api.github.com/gists/'+secrets.gistId, { method:'PATCH', headers:{...ghHeaders(),'Content-Type':'application/json'}, body:JSON.stringify({ files:{ [GIST_FILE]:{ content: syncPayload() } } }) });
@@ -2405,7 +2414,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v73'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v74'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
