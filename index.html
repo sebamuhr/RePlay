@@ -2416,7 +2416,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v75'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v76'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2494,16 +2494,11 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  // Cold open = a real app open → force-refresh the feed NOW, ignoring the 1h gate. The only skip is
-  // when a fetch finished seconds ago — e.g. an SW version-bump reload re-running boot — so back-to-back
-  // reloads don't double-spend quota. First-ever launch (lastFeedFetch=0) always forces.
-  autoFillOnOpen(Date.now() - (data.lastFeedFetch||0) > 30e3);
-  // Returning to a backgrounded app counts as "opening" it: if it was hidden a while, force a refresh;
-  // a quick tab-flip falls back to the hourly gate so we don't burn quota.
-  const REOPEN_MS = 3*60e3; let _hiddenAt = 0;
+  // App start = refresh the feed. Always. No gate, no conditions. The app starting up IS the trigger.
+  if (secrets.apiKey) { toast('🔄 Refreshing feed…'); refreshFeedNow(true, true); }
+  // Returning to a backgrounded app counts as opening it too → refresh again.
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { _hiddenAt = Date.now(); return; }
-    autoFillOnOpen(_hiddenAt > 0 && Date.now() - _hiddenAt > REOPEN_MS);
+    if (!document.hidden && secrets.apiKey) refreshFeedNow(true, true);
   });
   // Stay-open case: re-check every 5 min while the app is visible. The 1h lastFeedFetch gate means
   // this fires a REAL fetch at most once per hour — it just guarantees an idle, never-touched window
