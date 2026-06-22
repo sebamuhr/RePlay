@@ -1725,21 +1725,23 @@ async function refreshFeedNow(force, announce) {
 // The feed is "fresh" if it was last fetched under an hour ago.
 const FEED_STALE_MS = 1*3600e3; // 1 hour
 
-// THE refresh rule, exactly as you asked: on every open/return — and on a periodic tick while the
-// app stays open+visible — look at WHEN the feed was last fetched; if that was over an hour ago,
-// fetch. data.lastFeedFetch is the single source of truth and it is:
+// THE refresh rule, exactly as you asked:
+//   • OPENING the app (cold load, or returning after it was backgrounded a while) → ALWAYS refresh,
+//     pass force=true to skip the 1h gate. This is what "each time I open the app it refreshes" means.
+//   • While the app STAYS open+visible → a periodic tick refreshes at most once an hour (force=false),
+//     gated by WHEN the feed was last fetched.
+// data.lastFeedFetch is the single source of truth for the hourly gate and it is:
 //   • PERSISTENT — saved to disk, so a reload can't reset it (the old in-memory flag could), and
 //   • SYNCED across devices — so your phone won't re-fetch right after your computer already did.
 //     It pulls the shared pool instead → both devices show the SAME videos AND quota isn't spent twice.
-// We stamp lastFeedFetch BEFORE the async fetch so a double-open (or a 2nd device) can't double-fire,
-// and refreshFeedNow announces the outcome so you can SEE it ran (added N / nothing new / quota).
-function autoFillOnOpen() {
+// refreshFeedNow stamps lastFeedFetch AFTER the pass and announces the outcome so you can SEE it ran.
+function autoFillOnOpen(force) {
   const af = data.prefs.autoFill;
   if (!af || !af.enabled || !secrets.apiKey) return;
-  if (document.hidden) return;                                       // app isn't actually on screen
-  if (Date.now() - (data.lastFeedFetch||0) < FEED_STALE_MS) return;  // fetched < 1h ago → already fresh
+  if (document.hidden) return;                                                  // app isn't on screen
+  if (!force && Date.now() - (data.lastFeedFetch||0) < FEED_STALE_MS) return;   // fetched < 1h ago → fresh
   toast('🔄 Checking for newer videos…');
-  refreshFeedNow(false, true); // refreshFeedNow stamps lastFeedFetch when the pass finishes
+  refreshFeedNow(true, true); // always does a real fetch; stamps lastFeedFetch when the pass finishes
 }
 
 // Cheap auto-fill: pull new uploads from your followed + auto-tracked channels (~1 unit each).
@@ -2414,7 +2416,7 @@ $('syncNow').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secret
 $('forcePushBtn').onclick = () => { secrets.ghToken=$('ghToken').value.trim(); secrets.gistId=$('gistId').value.trim(); saveSecrets(); forcePush(); };
 let syncLabel = '';
 function setSyncState(text, err=false){ const el=$('syncState'); if(el){ el.textContent=text; el.className = err?'syncerr':'synced'; } syncLabel=text; renderPoolStat(); }
-const APP_VERSION = 'v74'; // shown in the header so we can confirm which build you're actually running
+const APP_VERSION = 'v75'; // shown in the header so we can confirm which build you're actually running
 function renderPoolStat(){ const el=$('poolStat'); if(!el) return; const n=(data.pool||[]).length; el.textContent = `📦 ${n} in pool${syncLabel?' · '+syncLabel:''} · ${APP_VERSION}`; }
 
 // Auto-pull: refresh from the Gist when the app regains focus, and periodically while open.
@@ -2492,13 +2494,21 @@ async function handleSharedLink() {
       setInterval(() => reg.update(), 60000); // keep checking while the app is open
     }).catch(()=>{});
   }
-  autoFillOnOpen(); // cold open → refresh if the feed was last fetched >1h ago
-  // Returning to a backgrounded app counts as "opening" it → same check (never runs while hidden).
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) autoFillOnOpen(); });
+  // Cold open = a real app open → force-refresh the feed NOW, ignoring the 1h gate. The only skip is
+  // when a fetch finished seconds ago — e.g. an SW version-bump reload re-running boot — so back-to-back
+  // reloads don't double-spend quota. First-ever launch (lastFeedFetch=0) always forces.
+  autoFillOnOpen(Date.now() - (data.lastFeedFetch||0) > 30e3);
+  // Returning to a backgrounded app counts as "opening" it: if it was hidden a while, force a refresh;
+  // a quick tab-flip falls back to the hourly gate so we don't burn quota.
+  const REOPEN_MS = 3*60e3; let _hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { _hiddenAt = Date.now(); return; }
+    autoFillOnOpen(_hiddenAt > 0 && Date.now() - _hiddenAt > REOPEN_MS);
+  });
   // Stay-open case: re-check every 5 min while the app is visible. The 1h lastFeedFetch gate means
   // this fires a REAL fetch at most once per hour — it just guarantees an idle, never-touched window
   // still refreshes instead of going stale forever.
-  setInterval(autoFillOnOpen, 5*60e3);
+  setInterval(() => autoFillOnOpen(false), 5*60e3);
 })();
 </script>
 </body>
